@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -16,6 +17,7 @@ import type { Response } from 'express';
 import { PrismaService } from '../prisma/prisma.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { serializeMoney } from '../common/money';
+import { normalizePhoneDigits, formatPhoneDisplay } from '../common/phone';
 import { ClientsService } from './clients.service';
 
 class ClientDto {
@@ -166,11 +168,20 @@ export class ClientsController {
 
   @Post()
   create(@Body() dto: ClientDto) {
+    const phone = formatPhoneDisplay(normalizePhoneDigits(dto.phone));
+    const whatsapp = formatPhoneDisplay(
+      normalizePhoneDigits(dto.whatsapp || dto.phone),
+    );
+    if (!phone) {
+      throw new BadRequestException(
+        'Enter a valid phone. UK example: 447588830800 or +44 7588 830800. Zimbabwe: 0771234567 or +263…',
+      );
+    }
     return this.prisma.client.create({
       data: {
         name: dto.name,
-        phone: dto.phone,
-        whatsapp: dto.whatsapp || dto.phone,
+        phone,
+        whatsapp: whatsapp || phone,
         email: dto.email,
         address: dto.address,
         notes: dto.notes,
@@ -184,7 +195,12 @@ export class ClientsController {
 
   @Patch(':id')
   update(@Param('id') id: string, @Body() dto: Partial<ClientDto>) {
-    return this.prisma.client.update({ where: { id }, data: dto });
+    const data: Record<string, unknown> = { ...dto };
+    if (dto.phone != null) data.phone = formatPhoneDisplay(normalizePhoneDigits(dto.phone));
+    if (dto.whatsapp != null) {
+      data.whatsapp = formatPhoneDisplay(normalizePhoneDigits(dto.whatsapp));
+    }
+    return this.prisma.client.update({ where: { id }, data });
   }
 
   @Delete(':id')
