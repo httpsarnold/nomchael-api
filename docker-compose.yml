@@ -1,0 +1,16 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: nomchael-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: nomchael
+      POSTGRES_PASSWORD: nomchael
+      POSTGRES_DB: nomchael
+    ports:
+      - "5432:5432"
+    volumes:
+      - nomchael_pg:/var/lib/postgresql/data
+
+volumes:
+  nomchael_pg:

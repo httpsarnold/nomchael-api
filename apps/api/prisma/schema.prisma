@@ -1,0 +1,779 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum UserRole {
+  SUPER_ADMIN
+  MANAGING_DIRECTOR
+  ACCOUNTANT
+  PROJECT_MANAGER
+  SITE_CLERK
+  VIEWER
+}
+
+enum ProjectStatus {
+  DRAFT
+  QUOTED
+  ACTIVE
+  ON_HOLD
+  COMPLETED
+  CANCELLED
+}
+
+enum QuotationStatus {
+  DRAFT
+  SENT
+  PENDING_MD_APPROVAL
+  ACCEPTED
+  REJECTED
+  SUPERSEDED
+}
+
+enum ExpenseScope {
+  PROJECT
+  GENERAL
+}
+
+/** PERSONAL = company cost tied to an employee (e.g. fuel allowance). PROJECT_SITE stays on the client project. */
+enum ExpenseKind {
+  STANDARD
+  PERSONAL
+  PROJECT_SITE
+}
+
+enum StockPaymentTerms {
+  CASH
+  CREDIT
+}
+
+enum PayableStatus {
+  OPEN
+  PARTIAL
+  PAID
+  VOID
+}
+
+enum ShortfallStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  INVOICED
+}
+
+enum StockMovementType {
+  PURCHASE
+  USE
+  SELL
+  RETURN_TO_OWNER
+  TRANSFER_OUT
+  TRANSFER_IN
+}
+
+enum LineItemType {
+  MATERIAL
+  LABOUR
+  EQUIPMENT
+  OTHER
+}
+
+enum SiteVisitStatus {
+  SCHEDULED
+  PAID
+  COMPLETED
+  CANCELLED
+}
+
+enum PaymentPurpose {
+  PROJECT
+  SITE_VISIT
+}
+
+enum PaymentMethod {
+  CASH
+  BANK_TRANSFER
+  MOBILE_MONEY
+  CHEQUE
+  OTHER
+}
+
+enum PropertyType {
+  SINGLE_HOME
+  CLUSTER
+  TOWNHOUSE
+  FLAT_APARTMENT
+  WAREHOUSE
+  COMMERCIAL
+  MIXED_USE
+  OTHER
+}
+
+enum RoomType {
+  BEDROOM
+  BATHROOM
+  TOILET
+  KITCHEN
+  LOUNGE
+  DINING
+  STORE
+  GARAGE
+  OFFICE
+  PASSAGE
+  OTHER
+}
+
+enum ClientType {
+  INDIVIDUAL
+  COMPANY
+}
+
+enum AccountMode {
+  SHARED
+  SPLIT
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  fullName     String
+  role         UserRole @default(VIEWER)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  auditLogs            AuditLog[]
+  approvedShortfalls   Shortfall[]         @relation("ShortfallApprover")
+  approvedQuotations   Quotation[]         @relation("QuotationMdApprover")
+  createdExpenses      Expense[]
+  createdPayments      Payment[]
+  projectAssignments   ProjectAssignment[]
+
+  @@index([role, isActive])
+  @@index([createdAt])
+}
+
+model Client {
+  id             String     @id @default(cuid())
+  name           String
+  phone          String
+  whatsapp       String?
+  email          String?
+  address        String?
+  notes          String?
+  type           ClientType @default(INDIVIDUAL)
+  contactPerson  String?
+  registrationNo String?
+  parentClientId String?
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  parentClient   Client?   @relation("ClientAccounts", fields: [parentClientId], references: [id])
+  childAccounts  Client[]  @relation("ClientAccounts")
+  projects       Project[]
+  standPackages  StandPackage[]
+  ledger         ClientLedgerEntry[]
+  siteVisits     SiteVisit[]
+
+  @@index([name])
+  @@index([phone])
+  @@index([type])
+  @@index([parentClientId])
+  @@index([createdAt])
+}
+
+model StandPackage {
+  id              String        @id @default(cuid())
+  code            String        @unique
+  name            String
+  description     String?
+  clientId        String
+  accountMode     AccountMode   @default(SHARED)
+  standCount      Int
+  propertyType    PropertyType  @default(SINGLE_HOME)
+  bedrooms        Int           @default(0)
+  bathrooms       Int           @default(0)
+  kitchens        Int           @default(0)
+  lounges         Int           @default(0)
+  otherRooms      Int           @default(0)
+  storeys         Int           @default(1)
+  floorAreaSqm    Float?
+  propertyNotes   String?
+  address         String?
+  locationLat     Float?
+  locationLng     Float?
+  locationNotes   String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  client   Client    @relation(fields: [clientId], references: [id])
+  projects Project[]
+
+  @@index([clientId])
+  @@index([accountMode])
+  @@index([createdAt])
+}
+
+model StageTemplate {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  sortOrder   Int
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([isActive, sortOrder])
+}
+
+model Project {
+  id              String        @id @default(cuid())
+  code            String        @unique
+  name            String
+  description     String?
+  status          ProjectStatus @default(DRAFT)
+  address         String?
+  locationLat     Float?
+  locationLng     Float?
+  locationNotes   String?
+  propertyType    PropertyType  @default(SINGLE_HOME)
+  unitCount       Int           @default(1)
+  storeys         Int           @default(1)
+  bedrooms        Int           @default(0)
+  bathrooms       Int           @default(0)
+  kitchens        Int           @default(0)
+  lounges         Int           @default(0)
+  otherRooms      Int           @default(0)
+  floorAreaSqm    Float?
+  propertyNotes   String?
+  clientId        String
+  standPackageId  String?
+  standNumber     Int?
+  quotationTotalCents BigInt    @default(0)
+  amountPaidCents     BigInt    @default(0)
+  plannedStartAt      DateTime?
+  plannedEndAt        DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  client       Client              @relation(fields: [clientId], references: [id])
+  standPackage StandPackage?       @relation(fields: [standPackageId], references: [id])
+  stages       ProjectStage[]
+  rooms        ProjectRoom[]
+  quotations   Quotation[]
+  expenses     Expense[]
+  payments     Payment[]
+  shortfalls   Shortfall[]
+  stockItems   ProjectStock[]
+  assignments  ProjectAssignment[]
+  invoices     Invoice[]
+  siteVisits   SiteVisit[]
+  supplierPayables SupplierPayable[]
+
+  @@index([clientId, status])
+  @@index([clientId, name])
+  @@index([standPackageId, standNumber])
+  @@index([status])
+  @@index([propertyType])
+  @@index([updatedAt])
+  @@index([createdAt])
+  @@index([plannedEndAt])
+}
+
+model ProjectRoom {
+  id          String   @id @default(cuid())
+  projectId   String
+  roomType    RoomType
+  label       String?
+  quantity    Int      @default(1)
+  floorLevel  String?
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, roomType])
+}
+
+model ProjectStage {
+  id              String    @id @default(cuid())
+  projectId       String
+  name            String
+  sortOrder       Int
+  labourCents     BigInt    @default(0)
+  isCompleted     Boolean   @default(false)
+  completedAt     DateTime?
+  plannedStartAt  DateTime?
+  plannedEndAt    DateTime?
+  actualStartAt   DateTime?
+  templateName    String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  project   Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  lineItems QuotationLineItem[]
+
+  @@index([projectId, sortOrder])
+  @@index([projectId, isCompleted])
+  @@index([plannedEndAt])
+}
+
+model SiteVisit {
+  id          String          @id @default(cuid())
+  code        String          @unique
+  clientId    String
+  projectId   String?
+  address     String?
+  feeCents    BigInt
+  status      SiteVisitStatus @default(SCHEDULED)
+  scheduledAt DateTime?
+  paidAt      DateTime?
+  completedAt DateTime?
+  notes       String?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  client   Client    @relation(fields: [clientId], references: [id])
+  project  Project?  @relation(fields: [projectId], references: [id])
+  payments Payment[]
+
+  @@index([clientId, status])
+  @@index([projectId, status])
+  @@index([status, createdAt])
+}
+
+model Quotation {
+  id                String          @id @default(cuid())
+  projectId         String
+  version           Int             @default(1)
+  status            QuotationStatus @default(DRAFT)
+  totalCents        BigInt          @default(0)
+  notes             String?
+  sentAt            DateTime?
+  acceptedAt        DateTime?
+  mdApprovedAt      DateTime?
+  mdApprovedById    String?
+  mdRejectionReason String?
+  whatsappMessageId String?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  project      Project             @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  mdApprovedBy User?               @relation("QuotationMdApprover", fields: [mdApprovedById], references: [id])
+  lineItems    QuotationLineItem[]
+
+  @@index([projectId, status])
+  @@index([projectId, version])
+  @@index([status])
+  @@index([mdApprovedById])
+  @@index([createdAt])
+}
+
+model QuotationLineItem {
+  id              String       @id @default(cuid())
+  quotationId     String
+  projectStageId  String?
+  catalogItemId   String?
+  type            LineItemType @default(MATERIAL)
+  description     String
+  quantity        Decimal      @default(1) @db.Decimal(18, 4)
+  unit            String       @default("ea")
+  unitPriceCents  BigInt
+  totalCents      BigInt
+  supplierId      String?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  quotation    Quotation     @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+  projectStage ProjectStage? @relation(fields: [projectStageId], references: [id])
+  catalogItem  CatalogItem?  @relation(fields: [catalogItemId], references: [id])
+  supplier     Supplier?     @relation(fields: [supplierId], references: [id])
+  stockItems   ProjectStock[]
+
+  @@index([quotationId])
+  @@index([projectStageId])
+  @@index([catalogItemId])
+  @@index([supplierId])
+  @@index([type])
+}
+
+model Supplier {
+  id          String   @id @default(cuid())
+  name        String
+  company     String?
+  phone       String?
+  email       String?
+  address     String?
+  locationLat Float?
+  locationLng Float?
+  notes       String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  prices      SupplierPrice[]
+  lineItems   QuotationLineItem[]
+  payables    SupplierPayable[]
+  payments    SupplierPayment[]
+  ledger      SupplierLedgerEntry[]
+  movements   StockMovement[]
+
+  @@index([name])
+  @@index([isActive])
+}
+
+model SupplierPrice {
+  id             String   @id @default(cuid())
+  supplierId     String
+  itemName       String
+  unit           String   @default("ea")
+  unitPriceCents BigInt
+  company        String?
+  recordedAt     DateTime @default(now())
+  notes          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  supplier Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+
+  @@index([itemName])
+  @@index([supplierId, itemName])
+  @@index([recordedAt])
+}
+
+model Expense {
+  id          String       @id @default(cuid())
+  scope       ExpenseScope
+  kind        ExpenseKind  @default(STANDARD)
+  projectId   String?
+  employeeId  String?
+  category    String
+  description String
+  amountCents BigInt
+  expenseDate DateTime     @default(now())
+  createdById String?
+  deletedAt   DateTime?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  project   Project?  @relation(fields: [projectId], references: [id])
+  employee  Employee? @relation(fields: [employeeId], references: [id])
+  createdBy User?     @relation(fields: [createdById], references: [id])
+
+  @@index([deletedAt, scope])
+  @@index([projectId, deletedAt])
+  @@index([employeeId, deletedAt])
+  @@index([kind])
+  @@index([expenseDate])
+  @@index([category])
+  @@index([createdById])
+}
+
+model Payment {
+  id            String         @id @default(cuid())
+  projectId     String
+  siteVisitId   String?
+  purpose       PaymentPurpose @default(PROJECT)
+  amountCents   BigInt
+  method        PaymentMethod  @default(CASH)
+  reference     String?
+  notes         String?
+  paidAt        DateTime       @default(now())
+  receiptNumber String         @unique
+  printedAt     DateTime?
+  createdById   String?
+  deletedAt     DateTime?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  project   Project    @relation(fields: [projectId], references: [id])
+  siteVisit SiteVisit? @relation(fields: [siteVisitId], references: [id])
+  createdBy User?      @relation(fields: [createdById], references: [id])
+
+  @@index([deletedAt, paidAt])
+  @@index([projectId, deletedAt])
+  @@index([siteVisitId])
+  @@index([purpose])
+  @@index([method])
+  @@index([createdById])
+}
+
+model Shortfall {
+  id              String          @id @default(cuid())
+  projectId       String
+  amountCents     BigInt
+  reason          String
+  status          ShortfallStatus @default(PENDING)
+  approvedById    String?
+  approvedAt      DateTime?
+  rejectionReason String?
+  invoiceId       String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  project    Project  @relation(fields: [projectId], references: [id])
+  approvedBy User?    @relation("ShortfallApprover", fields: [approvedById], references: [id])
+  invoice    Invoice? @relation(fields: [invoiceId], references: [id])
+
+  @@index([projectId, status])
+  @@index([status])
+  @@index([approvedById])
+  @@index([invoiceId])
+}
+
+model Invoice {
+  id            String    @id @default(cuid())
+  projectId     String
+  invoiceNumber String    @unique
+  amountCents   BigInt
+  description   String?
+  issuedAt      DateTime  @default(now())
+  dueAt         DateTime?
+  sentAt        DateTime?
+  deletedAt     DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  project    Project     @relation(fields: [projectId], references: [id])
+  shortfalls Shortfall[]
+
+  @@index([projectId, deletedAt])
+  @@index([issuedAt])
+}
+
+model CatalogItem {
+  id                   String   @id @default(cuid())
+  name                 String   @unique
+  unit                 String   @default("ea")
+  description          String?
+  category             String?
+  defaultUnitPriceCents BigInt  @default(0)
+  isActive             Boolean  @default(true)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  stockItems ProjectStock[]
+  lineItems  QuotationLineItem[]
+
+  @@index([isActive, name])
+  @@index([category])
+}
+
+model ProjectStock {
+  id                   String   @id @default(cuid())
+  projectId            String
+  catalogItemId        String?
+  quotationLineItemId  String?
+  itemName             String
+  unit                 String   @default("ea")
+  qtyPurchased         Decimal  @default(0) @db.Decimal(18, 4)
+  qtyUsed              Decimal  @default(0) @db.Decimal(18, 4)
+  qtySold              Decimal  @default(0) @db.Decimal(18, 4)
+  qtyReturned          Decimal  @default(0) @db.Decimal(18, 4)
+  qtyTransferredOut    Decimal  @default(0) @db.Decimal(18, 4)
+  qtyTransferredIn     Decimal  @default(0) @db.Decimal(18, 4)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  project           Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  catalogItem       CatalogItem?       @relation(fields: [catalogItemId], references: [id])
+  quotationLineItem QuotationLineItem? @relation(fields: [quotationLineItemId], references: [id])
+  movements         StockMovement[]
+
+  @@index([projectId, itemName])
+  @@index([catalogItemId])
+  @@index([quotationLineItemId])
+}
+
+model StockMovement {
+  id                String             @id @default(cuid())
+  projectStockId    String
+  type              StockMovementType
+  quantity          Decimal            @db.Decimal(18, 4)
+  unitPriceCents    BigInt?
+  transportFeeCents BigInt?            @default(0)
+  relatedProjectId  String?
+  fundingSource     String?
+  paymentTerms      StockPaymentTerms  @default(CASH)
+  supplierId        String?
+  notes             String?
+  createdAt         DateTime           @default(now())
+
+  projectStock ProjectStock      @relation(fields: [projectStockId], references: [id], onDelete: Cascade)
+  supplier     Supplier?         @relation(fields: [supplierId], references: [id])
+  payable      SupplierPayable?
+
+  @@index([projectStockId, type])
+  @@index([createdAt])
+  @@index([relatedProjectId])
+  @@index([fundingSource])
+  @@index([supplierId])
+  @@index([paymentTerms])
+}
+
+/** Amount we owe a supplier (accounts payable / creditor). */
+model SupplierPayable {
+  id              String        @id @default(cuid())
+  supplierId      String
+  projectId       String?
+  stockMovementId String?       @unique
+  invoiceRef      String?
+  description     String
+  amountCents     BigInt
+  amountPaidCents BigInt        @default(0)
+  status          PayableStatus @default(OPEN)
+  dueAt           DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  supplier      Supplier           @relation(fields: [supplierId], references: [id])
+  project       Project?           @relation(fields: [projectId], references: [id])
+  stockMovement StockMovement?     @relation(fields: [stockMovementId], references: [id])
+  allocations   SupplierPaymentAllocation[]
+
+  @@index([supplierId, status])
+  @@index([projectId, status])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model SupplierPayment {
+  id            String        @id @default(cuid())
+  supplierId    String
+  amountCents   BigInt
+  method        PaymentMethod @default(CASH)
+  reference     String?
+  notes         String?
+  paidAt        DateTime      @default(now())
+  createdById   String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  supplier    Supplier                     @relation(fields: [supplierId], references: [id])
+  allocations SupplierPaymentAllocation[]
+
+  @@index([supplierId, paidAt])
+  @@index([paidAt])
+}
+
+model SupplierPaymentAllocation {
+  id                String @id @default(cuid())
+  supplierPaymentId String
+  payableId         String
+  amountCents       BigInt
+  createdAt         DateTime @default(now())
+
+  payment SupplierPayment @relation(fields: [supplierPaymentId], references: [id], onDelete: Cascade)
+  payable SupplierPayable @relation(fields: [payableId], references: [id], onDelete: Cascade)
+
+  @@index([supplierPaymentId])
+  @@index([payableId])
+}
+
+model SupplierLedgerEntry {
+  id           String   @id @default(cuid())
+  supplierId   String
+  projectId    String?
+  entryType    String
+  /** Positive increases what we owe (credit purchase); negative reduces it (payment). */
+  amountCents  BigInt
+  balanceCents BigInt
+  description  String
+  referenceId  String?
+  createdAt    DateTime @default(now())
+
+  supplier Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+
+  @@index([supplierId, createdAt])
+  @@index([projectId])
+  @@index([referenceId])
+}
+
+model Employee {
+  id           String    @id @default(cuid())
+  fullName     String
+  phone        String?
+  email        String?
+  roleTitle    String?
+  dailyWageCents BigInt  @default(0)
+  isActive     Boolean   @default(true)
+  hiredAt      DateTime?
+  notes        String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  assignments ProjectAssignment[]
+  expenses    Expense[]
+
+  @@index([fullName])
+  @@index([isActive])
+}
+
+model ProjectAssignment {
+  id              String    @id @default(cuid())
+  projectId       String
+  employeeId      String
+  userId          String?
+  dailyWageCents  BigInt
+  startDate       DateTime  @default(now())
+  endDate         DateTime?
+  daysWorked      Decimal   @default(0) @db.Decimal(10, 2)
+  notes           String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  project  Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  employee Employee @relation(fields: [employeeId], references: [id])
+  user     User?    @relation(fields: [userId], references: [id])
+
+  @@index([projectId, employeeId])
+  @@index([employeeId])
+  @@index([userId])
+  @@index([startDate])
+}
+
+model ClientLedgerEntry {
+  id          String   @id @default(cuid())
+  clientId    String
+  projectId   String?
+  entryType   String
+  amountCents BigInt
+  balanceCents BigInt
+  description String
+  referenceId String?
+  createdAt   DateTime @default(now())
+
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@index([clientId, createdAt])
+  @@index([projectId])
+  @@index([referenceId])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String?
+  action     String
+  entityType String
+  entityId   String?
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([entityType, entityId])
+  @@index([userId, createdAt])
+  @@index([action])
+  @@index([createdAt])
+}
+
+model Counter {
+  id    String @id
+  value Int    @default(0)
+}

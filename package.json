@@ -1,0 +1,20 @@
+{
+  "name": "nomchael",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace=@nomchael/api & npm run dev --workspace=@nomchael/web",
+    "dev:api": "npm run dev --workspace=@nomchael/api",
+    "dev:web": "npm run dev --workspace=@nomchael/web",
+    "build": "npm run build --workspaces --if-present",
+    "db:generate": "npm run prisma:generate --workspace=@nomchael/api",
+    "db:migrate": "npm run prisma:migrate --workspace=@nomchael/api",
+    "db:seed": "npm run prisma:seed --workspace=@nomchael/api"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
