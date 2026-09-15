@@ -7,6 +7,7 @@
     "build": "prisma generate && node -e \"try{require('fs').rmSync('dist',{recursive:true})}catch(e){}\" && nest build && node -e \"const fs=require('fs'); if(!fs.existsSync('dist/main.js')){console.error('Build failed: dist/main.js missing'); process.exit(1)} console.log('Build ok: dist/main.js')\"",
     "start": "node dist/main.js",
     "start:prod": "node dist/main.js",
+    "start:railway": "node -e \"const fs=require('fs');const {execSync}=require('child_process'); if(!fs.existsSync('dist/main.js')){console.log('dist/main.js missing, building...'); execSync('npm run build',{stdio:'inherit'})}\" && node dist/main.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate deploy",
     "prisma:push": "prisma db push",
