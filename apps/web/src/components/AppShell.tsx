@@ -6,8 +6,16 @@ import { clearAuth, getUser, type AuthUser } from '@/lib/api';
 import { useEffect, useState } from 'react';
 import { NotificationBell } from '@/components/NotificationBell';
 
-type NavItem = { href: string; label: string; match?: (path: string) => boolean };
+type NavItem = {
+  href: string;
+  label: string;
+  match?: (path: string) => boolean;
+  locked?: boolean;
+};
 type NavGroup = { id: string; label: string; summary: string; items: NavItem[] };
+
+/** Estate catch-up mode: only Labour revenue + Reports stay clickable. */
+const ESTATE_FOCUS_MODE = true;
 
 const primary: (NavItem & { icon: string })[] = [
   {
@@ -15,12 +23,14 @@ const primary: (NavItem & { icon: string })[] = [
     label: 'Home',
     icon: '⌂',
     match: (p) => p === '/dashboard',
+    locked: ESTATE_FOCUS_MODE,
   },
   {
     href: '/projects',
     label: 'All Projects',
     icon: '▦',
     match: (p) => p.startsWith('/projects'),
+    locked: ESTATE_FOCUS_MODE,
   },
 ];
 
@@ -30,16 +40,26 @@ const groups: NavGroup[] = [
     label: 'Operations',
     summary: 'Overview',
     items: [
-      { href: '/dashboard', label: 'Portfolio Analytics', match: (p) => p === '/dashboard' },
-      { href: '/open-project', label: 'Open a project' },
-      { href: '/site-visits', label: 'Site visits' },
-      { href: '/quotations', label: 'Quotations' },
-      { href: '/timeline', label: 'Project timeline' },
-      { href: '/catalog', label: 'Material prices' },
-      { href: '/clients', label: 'Clients' },
-      { href: '/employees', label: 'Staff & Labour' },
-      { href: '/map', label: 'Project Map' },
-      { href: '/site-capture', label: 'Capture GPS on site' },
+      { href: '/dashboard', label: 'Portfolio Analytics', match: (p) => p === '/dashboard', locked: ESTATE_FOCUS_MODE },
+      { href: '/open-project', label: 'Open a project', locked: ESTATE_FOCUS_MODE },
+      { href: '/site-visits', label: 'Site visits', locked: ESTATE_FOCUS_MODE },
+      { href: '/quotations', label: 'Quotations', locked: ESTATE_FOCUS_MODE },
+      { href: '/timeline', label: 'Project timeline', locked: ESTATE_FOCUS_MODE },
+      { href: '/catalog', label: 'Material prices', locked: ESTATE_FOCUS_MODE },
+      { href: '/clients', label: 'Clients', locked: ESTATE_FOCUS_MODE },
+      { href: '/employees', label: 'Staff & Labour', locked: ESTATE_FOCUS_MODE },
+      { href: '/map', label: 'Project Map', locked: ESTATE_FOCUS_MODE },
+      { href: '/site-capture', label: 'Capture GPS on site', locked: ESTATE_FOCUS_MODE },
+    ],
+  },
+  {
+    id: 'labour-revenue',
+    label: 'Labour revenue',
+    summary: 'Estates',
+    items: [
+      { href: '/labour-catchup', label: 'Labour catch-up' },
+      { href: '/estates', label: 'Estates' },
+      { href: '/bulk-labour', label: 'Bulk Labour' },
     ],
   },
   {
@@ -47,9 +67,9 @@ const groups: NavGroup[] = [
     label: 'Finance',
     summary: 'General',
     items: [
-      { href: '/finance', label: 'Finance desk' },
-      { href: '/suppliers', label: 'Suppliers & Creditors' },
-      { href: '/stock', label: 'Stores & Stock' },
+      { href: '/finance', label: 'Finance desk', locked: ESTATE_FOCUS_MODE },
+      { href: '/suppliers', label: 'Suppliers & Creditors', locked: ESTATE_FOCUS_MODE },
+      { href: '/stock', label: 'Stores & Stock', locked: ESTATE_FOCUS_MODE },
       { href: '/reports', label: 'Reports & Statements' },
     ],
   },
@@ -57,7 +77,7 @@ const groups: NavGroup[] = [
     id: 'admin',
     label: 'Administration',
     summary: 'General',
-    items: [{ href: '/admin/users', label: 'Users & Levels' }],
+    items: [{ href: '/admin/users', label: 'Users & Levels', locked: ESTATE_FOCUS_MODE }],
   },
 ];
 
@@ -75,13 +95,45 @@ function initials(name: string) {
     .join('');
 }
 
+function NavLinkItem({
+  item,
+  pathname,
+  icon,
+}: {
+  item: NavItem;
+  pathname: string;
+  icon?: string;
+}) {
+  const active = isActive(item, pathname);
+  if (item.locked) {
+    return (
+      <span
+        className={`nav-link locked ${active ? 'active' : ''}`}
+        title="Locked while using Estates catch-up"
+        aria-disabled="true"
+      >
+        {icon ? <span className="icon">{icon}</span> : null}
+        {item.label}
+        <span className="nav-lock">Locked</span>
+      </span>
+    );
+  }
+  return (
+    <Link href={item.href} className={`nav-link ${active ? 'active' : ''}`}>
+      {icon ? <span className="icon">{icon}</span> : null}
+      {item.label}
+    </Link>
+  );
+}
+
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const [user, setUser] = useState<AuthUser | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [open, setOpen] = useState<Record<string, boolean>>({
-    operations: true,
+    operations: false,
+    'labour-revenue': true,
     finance: true,
     admin: false,
   });
@@ -128,15 +180,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </button>
         </div>
 
+        {ESTATE_FOCUS_MODE && (
+          <p className="nav-focus-note">
+            Estate catch-up mode: only Labour revenue and Reports are open.
+          </p>
+        )}
+
         {primary.map((l) => (
-          <Link
-            key={l.label}
-            href={l.href}
-            className={`nav-link ${isActive(l, pathname) ? 'active' : ''}`}
-          >
-            <span className="icon">{l.icon}</span>
-            {l.label}
-          </Link>
+          <NavLinkItem key={l.label} item={l} pathname={pathname} icon={l.icon} />
         ))}
 
         {groups.map((g) => (
@@ -153,13 +204,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             {open[g.id] && (
               <div className="nav-sub">
                 {g.items.map((item) => (
-                  <Link
+                  <NavLinkItem
                     key={`${g.id}-${item.href}-${item.label}`}
-                    href={item.href}
-                    className={`nav-link ${isActive(item, pathname) ? 'active' : ''}`}
-                  >
-                    {item.label}
-                  </Link>
+                    item={item}
+                    pathname={pathname}
+                  />
                 ))}
               </div>
             )}

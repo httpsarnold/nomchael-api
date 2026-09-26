@@ -106,7 +106,7 @@ export default function FinancePage() {
   const filteredPayments = useMemo(() => {
     if (!txQ) return payments.slice(0, 40);
     return payments.filter((p) =>
-      `${p.receiptNumber} ${p.project?.code} ${p.project?.client?.name || ''} ${p.method}`
+      `${p.receiptNumber} ${p.project?.code} ${p.project?.client?.name || ''} ${p.method} ${p.purpose || ''}`
         .toLowerCase()
         .includes(txQ),
     );
@@ -225,7 +225,10 @@ export default function FinancePage() {
       <h1>Finance desk</h1>
       <p className="muted">
         Search a project, take income, buy for the client, record site or personal costs, and settle
-        suppliers. Debtors (clients who owe us) and creditors (suppliers we owe) live here.
+        suppliers. Debtors (clients who owe us) and creditors (suppliers we owe) live here. Labour
+        catch-up cash is under{' '}
+        <Link href="/labour-catchup">Labour catch-up</Link>,{' '}
+        <Link href="/estates">Estates</Link>, and <Link href="/bulk-labour">Bulk Labour</Link>.
       </p>
       {error && <p className="error">{error}</p>}
       {info && <p className="muted">{info}</p>}
@@ -762,6 +765,7 @@ export default function FinancePage() {
                     <tr>
                       <th>Receipt</th>
                       <th>Project</th>
+                      <th>Purpose</th>
                       <th>Amount</th>
                     </tr>
                   </thead>
@@ -770,6 +774,7 @@ export default function FinancePage() {
                       <tr key={p.id}>
                         <td>{p.receiptNumber}</td>
                         <td>{p.project?.code}</td>
+                        <td>{p.purpose || 'PROJECT'}</td>
                         <td>{money(p.amountCents)}</td>
                       </tr>
                     ))}

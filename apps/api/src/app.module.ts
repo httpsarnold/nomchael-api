@@ -22,6 +22,7 @@ import { StandPackagesModule } from './stand-packages/stand-packages.module';
 import { CatalogModule } from './catalog/catalog.module';
 import { SiteVisitsModule } from './site-visits/site-visits.module';
 import { RolesGuard } from './common/roles.decorator';
+import { LabourRevenueModule } from './labour-revenue/labour-revenue.module';
 
 @Module({
   imports: [
@@ -47,6 +48,7 @@ import { RolesGuard } from './common/roles.decorator';
     WhatsappModule,
     PrintingModule,
     InvoicesModule,
+    LabourRevenueModule,
   ],
   providers: [RolesGuard],
 })

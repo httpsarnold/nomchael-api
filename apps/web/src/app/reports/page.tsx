@@ -29,6 +29,10 @@ export default function ReportsPage() {
   const [period, setPeriod] = useState<Period>('monthly');
   const [projectId, setProjectId] = useState('');
   const [projects, setProjects] = useState<any[]>([]);
+  const [estates, setEstates] = useState<any[]>([]);
+  const [estateId, setEstateId] = useState('');
+  const [estateStatement, setEstateStatement] = useState<any>(null);
+  const [estateBusy, setEstateBusy] = useState(false);
   const [clients, setClients] = useState<any[]>([]);
   const [clientId, setClientId] = useState('');
   const [clientLabel, setClientLabel] = useState('');
@@ -49,6 +53,26 @@ export default function ReportsPage() {
 
   async function loadProjects() {
     setProjects(await api('/projects'));
+  }
+
+  async function loadEstates() {
+    setEstates(await api('/estates'));
+  }
+
+  async function loadEstateStatement(id: string) {
+    if (!id) {
+      setEstateStatement(null);
+      return;
+    }
+    setEstateBusy(true);
+    try {
+      setEstateStatement(await api(`/estates/${id}/statement`));
+    } catch (e: any) {
+      setError(e.message || 'Failed to load estate statement');
+      setEstateStatement(null);
+    } finally {
+      setEstateBusy(false);
+    }
   }
 
   async function loadClients(search = '') {
@@ -87,8 +111,24 @@ export default function ReportsPage() {
   }
 
   useEffect(() => {
-    Promise.all([loadProjects(), loadClients()]).catch((e) => setError(e.message));
+    Promise.all([loadProjects(), loadClients(), loadEstates()]).catch((e) => setError(e.message));
+    const preset =
+      typeof window !== 'undefined'
+        ? new URLSearchParams(window.location.search).get('estate')
+        : '';
+    if (preset) {
+      setEstateId(preset);
+      loadEstateStatement(preset).catch(() => undefined);
+    }
   }, []);
+
+  useEffect(() => {
+    if (!estateId) {
+      setEstateStatement(null);
+      return;
+    }
+    loadEstateStatement(estateId).catch(() => undefined);
+  }, [estateId]);
 
   useEffect(() => {
     loadStatements().catch((e) => {
@@ -200,11 +240,109 @@ export default function ReportsPage() {
     <AppShell>
       <h1>Reports & statements</h1>
       <p className="muted">
-        Daily, weekly, monthly, quarterly and yearly statements for money in, stock buys, stock use
-        and leftovers.
+        Estate big-file statements (quoted, discount, income, labour used, expenses, borrowings,
+        cash at hand) plus company period reports.
       </p>
       {loading && <LoadingState label="Loading statements…" />}
       {error && <p className="error">{error}</p>}
+
+      <div className="panel" style={{ marginTop: '1rem' }}>
+        <h3>Estate / big project statement</h3>
+        <p className="muted">
+          Select one estate (e.g. Pleasant Valley). See quoted labour, discounts, cash received,
+          labour used, expenses, borrowings to repay, and cash at hand with DR/CR lines.
+        </p>
+        <label>
+          Estate file
+          <select value={estateId} onChange={(e) => setEstateId(e.target.value)}>
+            <option value="">Select estate…</option>
+            {estates.map((e) => (
+              <option key={e.id} value={e.id}>
+                {e.code} · {e.name} ({e.trends?.houseCount ?? e.houseCount} houses)
+              </option>
+            ))}
+          </select>
+        </label>
+        {estateBusy && <LoadingState label="Loading estate statement…" compact />}
+        {estateStatement && !estateBusy && (
+          <>
+            <div className="grid grid-3" style={{ marginTop: '1rem' }}>
+              <div>
+                <div className="muted">Quoted</div>
+                <strong>{money(estateStatement.summary.labourQuotedCents)}</strong>
+              </div>
+              <div>
+                <div className="muted">Discounts</div>
+                <strong>{money(estateStatement.summary.discountCents)}</strong>
+              </div>
+              <div>
+                <div className="muted">Net due</div>
+                <strong>{money(estateStatement.summary.netDueCents)}</strong>
+              </div>
+              <div>
+                <div className="muted">Cash received</div>
+                <strong>{money(estateStatement.summary.cashReceivedCents)}</strong>
+              </div>
+              <div>
+                <div className="muted">Labour used</div>
+                <strong>{money(estateStatement.summary.labourUsedCents || 0)}</strong>
+              </div>
+              <div>
+                <div className="muted">Expenses</div>
+                <strong>{money(estateStatement.summary.expensesCents || 0)}</strong>
+              </div>
+              <div>
+                <div className="muted">Borrowings outstanding</div>
+                <strong>
+                  {money(estateStatement.summary.borrowingsOutstandingCents || 0)}
+                </strong>
+              </div>
+              <div>
+                <div className="muted">Cash at hand</div>
+                <strong>
+                  {money(
+                    estateStatement.summary.cashAtHandCents ??
+                      estateStatement.summary.stillAvailableCents,
+                  )}
+                </strong>
+              </div>
+            </div>
+            <p className="muted" style={{ marginTop: '0.5rem' }}>
+              {estateStatement.note}
+            </p>
+            {(estateStatement.borrowers || []).length > 0 && (
+              <p>
+                <strong>Borrowers to repay:</strong>{' '}
+                {estateStatement.borrowers
+                  .map((b: any) => `${b.name} (${money(b.outstandingCents)})`)
+                  .join(', ')}
+              </p>
+            )}
+            <div className="table-wrap" style={{ marginTop: '0.75rem' }}>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Section</th>
+                    <th>Description</th>
+                    <th>DR</th>
+                    <th>CR</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(estateStatement.lines || []).map((l: any, i: number) => (
+                    <tr key={i}>
+                      <td>{l.section}</td>
+                      <td>{l.description}</td>
+                      <td>{l.debitCents ? money(l.debitCents) : '—'}</td>
+                      <td>{l.creditCents ? money(l.creditCents) : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+      </div>
 
       <div className="panel" style={{ marginTop: '1rem' }}>
         <h3>Individual client statement</h3>

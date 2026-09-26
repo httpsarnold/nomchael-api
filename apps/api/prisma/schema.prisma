@@ -92,6 +92,29 @@ enum SiteVisitStatus {
 enum PaymentPurpose {
   PROJECT
   SITE_VISIT
+  LABOUR
+}
+
+enum ProjectKind {
+  STANDARD
+  LEGACY
+  ESTATE_UNIT
+}
+
+enum FundUseCategory {
+  COMPANY_DEBT
+  PAID_TO_LABOUR
+  OTHER_PROJECT
+  OPERATIONS
+  EXPENSE
+  BORROWING
+  OTHER
+}
+
+enum EstateLedgerKind {
+  EXPENSE
+  BORROWING
+  REPAYMENT
 }
 
 enum PaymentMethod {
@@ -152,6 +175,8 @@ model User {
   approvedQuotations   Quotation[]         @relation("QuotationMdApprover")
   createdExpenses      Expense[]
   createdPayments      Payment[]
+  createdFundUses      ProjectFundUse[]
+  createdEstateLedger  EstateLedgerEntry[]
   projectAssignments   ProjectAssignment[]
 
   @@index([role, isActive])
@@ -231,12 +256,62 @@ model StageTemplate {
   @@index([isActive, sortOrder])
 }
 
+model EstateProgramme {
+  id               String       @id @default(cuid())
+  code             String       @unique
+  name             String
+  description      String?
+  houseCount       Int
+  baseLabourCents  BigInt       @default(0)
+  propertyType     PropertyType @default(SINGLE_HOME)
+  bedrooms         Int          @default(0)
+  bathrooms        Int          @default(0)
+  kitchens         Int          @default(0)
+  lounges          Int          @default(0)
+  otherRooms       Int          @default(0)
+  storeys          Int          @default(1)
+  floorAreaSqm     Float?
+  propertyNotes    String?
+  address          String?
+  locationNotes    String?
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  projects     Project[]
+  ledgerEntries EstateLedgerEntry[]
+
+  @@index([name])
+  @@index([createdAt])
+}
+
+model EstateLedgerEntry {
+  id                String           @id @default(cuid())
+  estateProgrammeId String
+  projectId         String?
+  kind              EstateLedgerKind
+  amountCents       BigInt
+  partyName         String?
+  description       String?
+  entryDate         DateTime         @default(now())
+  createdById       String?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  estate    EstateProgramme @relation(fields: [estateProgrammeId], references: [id], onDelete: Cascade)
+  createdBy User?           @relation(fields: [createdById], references: [id])
+
+  @@index([estateProgrammeId, entryDate])
+  @@index([kind])
+  @@index([createdById])
+}
+
 model Project {
   id              String        @id @default(cuid())
   code            String        @unique
   name            String
   description     String?
   status          ProjectStatus @default(DRAFT)
+  kind            ProjectKind   @default(STANDARD)
   address         String?
   locationLat     Float?
   locationLng     Float?
@@ -254,6 +329,12 @@ model Project {
   clientId        String
   standPackageId  String?
   standNumber     Int?
+  estateProgrammeId String?
+  unitNumber        Int?
+  labourQuotedCents BigInt      @default(0)
+  discountCents     BigInt      @default(0)
+  discountReason    String?
+  catchupStageLabel String?
   quotationTotalCents BigInt    @default(0)
   amountPaidCents     BigInt    @default(0)
   plannedStartAt      DateTime?
@@ -261,28 +342,51 @@ model Project {
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
 
-  client       Client              @relation(fields: [clientId], references: [id])
-  standPackage StandPackage?       @relation(fields: [standPackageId], references: [id])
-  stages       ProjectStage[]
-  rooms        ProjectRoom[]
-  quotations   Quotation[]
-  expenses     Expense[]
-  payments     Payment[]
-  shortfalls   Shortfall[]
-  stockItems   ProjectStock[]
-  assignments  ProjectAssignment[]
-  invoices     Invoice[]
-  siteVisits   SiteVisit[]
+  client           Client              @relation(fields: [clientId], references: [id])
+  standPackage     StandPackage?       @relation(fields: [standPackageId], references: [id])
+  estateProgramme  EstateProgramme?    @relation(fields: [estateProgrammeId], references: [id])
+  stages           ProjectStage[]
+  rooms            ProjectRoom[]
+  quotations       Quotation[]
+  expenses         Expense[]
+  payments         Payment[]
+  fundUses         ProjectFundUse[]
+  shortfalls       Shortfall[]
+  stockItems       ProjectStock[]
+  assignments      ProjectAssignment[]
+  invoices         Invoice[]
+  siteVisits       SiteVisit[]
   supplierPayables SupplierPayable[]
 
   @@index([clientId, status])
   @@index([clientId, name])
   @@index([standPackageId, standNumber])
+  @@index([estateProgrammeId, unitNumber])
+  @@index([kind, status])
   @@index([status])
   @@index([propertyType])
   @@index([updatedAt])
   @@index([createdAt])
   @@index([plannedEndAt])
+}
+
+model ProjectFundUse {
+  id          String          @id @default(cuid())
+  projectId   String
+  amountCents BigInt
+  category    FundUseCategory @default(COMPANY_DEBT)
+  description String?
+  usedAt      DateTime        @default(now())
+  createdById String?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy User?   @relation(fields: [createdById], references: [id])
+
+  @@index([projectId, usedAt])
+  @@index([category])
+  @@index([createdById])
 }
 
 model ProjectRoom {

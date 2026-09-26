@@ -108,7 +108,8 @@ async function main() {
   console.log(`Material catalog defaults ensured (${defaultCatalog.length} items).`);
 
   const projectCount = await prisma.project.count();
-  if (projectCount === 0) {
+  // Demo clients/projects only when explicitly requested (local demos).
+  if (projectCount === 0 && process.env.SEED_DEMO === '1') {
     const client = await prisma.client.create({
       data: {
         name: 'Takudzwa Moyo',

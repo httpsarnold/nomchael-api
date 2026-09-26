@@ -33,6 +33,7 @@ export type ProjectRow = {
   name: string;
   status: string;
   projectStatus?: string;
+  projectDaysBehind?: number;
   plannedStartAt?: string | null;
   plannedEndAt?: string | null;
   stages?: Stage[];

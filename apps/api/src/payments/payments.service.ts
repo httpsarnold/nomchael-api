@@ -33,10 +33,13 @@ export class PaymentsService {
     purpose?: PaymentPurpose | string;
     siteVisitId?: string;
   }) {
+    const purposeRaw = String(data.purpose || 'PROJECT').toUpperCase();
     const purpose =
-      String(data.purpose || 'PROJECT') === 'SITE_VISIT'
+      purposeRaw === 'SITE_VISIT'
         ? PaymentPurpose.SITE_VISIT
-        : PaymentPurpose.PROJECT;
+        : purposeRaw === 'LABOUR'
+          ? PaymentPurpose.LABOUR
+          : PaymentPurpose.PROJECT;
 
     const project = await this.prisma.project.findUnique({
       where: { id: data.projectId },
@@ -80,7 +83,7 @@ export class PaymentsService {
         data: { amountPaidCents: newPaid },
       });
       stockSeed = await this.stock.seedFromPayment(project.id);
-    } else if (data.siteVisitId) {
+    } else if (purpose === PaymentPurpose.SITE_VISIT && data.siteVisitId) {
       await this.prisma.siteVisit.update({
         where: { id: data.siteVisitId },
         data: {
@@ -96,17 +99,25 @@ export class PaymentsService {
       orderBy: { createdAt: 'desc' },
     });
     const prev = lastLedger?.balanceCents || 0n;
+    const ledgerLabel =
+      purpose === PaymentPurpose.SITE_VISIT
+        ? `Site visit fee revenue ${receiptNumber}`
+        : purpose === PaymentPurpose.LABOUR
+          ? `Labour receipt ${receiptNumber}`
+          : `Payment ${receiptNumber}`;
     await this.prisma.clientLedgerEntry.create({
       data: {
         clientId: project.clientId,
         projectId: project.id,
-        entryType: purpose === PaymentPurpose.SITE_VISIT ? 'SITE_VISIT_FEE' : 'PAYMENT',
+        entryType:
+          purpose === PaymentPurpose.SITE_VISIT
+            ? 'SITE_VISIT_FEE'
+            : purpose === PaymentPurpose.LABOUR
+              ? 'LABOUR_PAYMENT'
+              : 'PAYMENT',
         amountCents: BigInt(data.amountCents),
         balanceCents: prev - BigInt(data.amountCents),
-        description:
-          purpose === PaymentPurpose.SITE_VISIT
-            ? `Site visit fee revenue ${receiptNumber}`
-            : `Payment ${receiptNumber}`,
+        description: ledgerLabel,
         referenceId: payment.id,
       },
     });
@@ -114,7 +125,12 @@ export class PaymentsService {
     await this.prisma.auditLog.create({
       data: {
         userId: data.createdById,
-        action: purpose === PaymentPurpose.SITE_VISIT ? 'SITE_VISIT_PAYMENT' : 'PAYMENT_CREATE',
+        action:
+          purpose === PaymentPurpose.SITE_VISIT
+            ? 'SITE_VISIT_PAYMENT'
+            : purpose === PaymentPurpose.LABOUR
+              ? 'LABOUR_PAYMENT'
+              : 'PAYMENT_CREATE',
         entityType: 'Payment',
         entityId: payment.id,
         metadata: {
@@ -135,7 +151,9 @@ export class PaymentsService {
           projectName:
             purpose === PaymentPurpose.SITE_VISIT
               ? `Site visit · ${project.name}`
-              : project.name,
+              : purpose === PaymentPurpose.LABOUR
+                ? `Labour · ${project.name}`
+                : project.name,
           amountCents: data.amountCents,
           method: payment.method,
           paidAt: payment.paidAt,

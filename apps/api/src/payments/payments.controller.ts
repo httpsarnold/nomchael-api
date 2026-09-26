@@ -27,6 +27,14 @@ class CreatePaymentDto {
   @IsOptional()
   @IsBoolean()
   print?: boolean;
+
+  @IsOptional()
+  @IsString()
+  purpose?: string;
+
+  @IsOptional()
+  @IsString()
+  siteVisitId?: string;
 }
 
 @Controller('payments')

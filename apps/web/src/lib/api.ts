@@ -65,6 +65,11 @@ export async function api<T = unknown>(
 
 /** Authenticated PDF download (Bearer token). Triggers a real file save. */
 export async function downloadPdf(path: string, filename: string) {
+  return downloadFile(path, filename);
+}
+
+/** Authenticated binary download (PDF, Excel, etc.). */
+export async function downloadFile(path: string, filename: string) {
   const token = getToken();
   const res = await fetch(`${API_URL}/api${path}`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -73,14 +78,14 @@ export async function downloadPdf(path: string, filename: string) {
   if (res.status === 401 && typeof window !== 'undefined') {
     clearAuth();
     window.location.href = '/login';
-    throw new Error('Please sign in again to download the PDF');
+    throw new Error('Please sign in again to download the file');
   }
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({ message: res.statusText }));
     const msg = Array.isArray(err.message)
       ? err.message.join(', ')
-      : err.message || 'PDF download failed';
+      : err.message || 'Download failed';
     throw new Error(msg);
   }
 
