@@ -21,13 +21,20 @@ export class ReportsController {
       },
     });
 
+    const labourPaymentCents = project.payments
+      .filter((p) => p.purpose === PaymentPurpose.LABOUR)
+      .reduce((s, p) => s + Number(p.amountCents), 0);
     const projectPaymentCents = project.payments
-      .filter((p) => p.purpose !== PaymentPurpose.SITE_VISIT)
+      .filter(
+        (p) =>
+          p.purpose !== PaymentPurpose.SITE_VISIT &&
+          p.purpose !== PaymentPurpose.LABOUR,
+      )
       .reduce((s, p) => s + Number(p.amountCents), 0);
     const siteVisitFeeCents = project.payments
       .filter((p) => p.purpose === PaymentPurpose.SITE_VISIT)
       .reduce((s, p) => s + Number(p.amountCents), 0);
-    const revenuePayments = projectPaymentCents + siteVisitFeeCents;
+    const revenuePayments = projectPaymentCents + siteVisitFeeCents + labourPaymentCents;
     const stockSales = project.stockItems
       .flatMap((i) => i.movements)
       .filter((m) => m.type === StockMovementType.SELL)
@@ -53,7 +60,10 @@ export class ReportsController {
       revenueCents: revenue,
       paymentRevenueCents: revenuePayments,
       projectPaymentRevenueCents: projectPaymentCents,
+      labourPaymentRevenueCents: labourPaymentCents,
       siteVisitFeeRevenueCents: siteVisitFeeCents,
+      labourQuotedCents: Number(project.labourQuotedCents || 0),
+      discountCents: Number(project.discountCents || 0),
       stockSaleRevenueCents: stockSales,
       expenseCents: expenses,
       labourAssignmentCents: labour,
@@ -85,9 +95,11 @@ export class ReportsController {
     });
     const assignments = await this.prisma.projectAssignment.findMany();
 
-    const projectPayments = payments.filter((p) => p.purpose !== PaymentPurpose.SITE_VISIT);
+    const projectPayments = payments.filter((p) => p.purpose === PaymentPurpose.PROJECT);
+    const labourPayments = payments.filter((p) => p.purpose === PaymentPurpose.LABOUR);
     const siteVisitPayments = payments.filter((p) => p.purpose === PaymentPurpose.SITE_VISIT);
     const revenueProjectPayments = projectPayments.reduce((s, p) => s + Number(p.amountCents), 0);
+    const revenueLabourPayments = labourPayments.reduce((s, p) => s + Number(p.amountCents), 0);
     const revenueSiteVisitFees = siteVisitPayments.reduce((s, p) => s + Number(p.amountCents), 0);
     const revenueStock = stockSales.reduce(
       (s, m) => s + Number(m.quantity) * Number(m.unitPriceCents || 0),
@@ -104,7 +116,8 @@ export class ReportsController {
       0,
     );
 
-    const revenue = revenueProjectPayments + revenueSiteVisitFees + revenueStock;
+    const revenue =
+      revenueProjectPayments + revenueSiteVisitFees + revenueLabourPayments + revenueStock;
     const cogsLike = projectExpenses + wages;
     const grossProfit = revenue - cogsLike;
     const netProfit = grossProfit - generalExpenses;
@@ -114,6 +127,7 @@ export class ReportsController {
       period: { from: fromDate.toISOString(), to: toDate.toISOString() },
       revenue: {
         projectPaymentsCents: revenueProjectPayments,
+        labourPaymentsCents: revenueLabourPayments,
         siteVisitFeesCents: revenueSiteVisitFees,
         stockSalesCents: revenueStock,
         totalCents: revenue,
@@ -229,11 +243,13 @@ export class ReportsController {
       Number(s.qtyReturned) -
       Number(s.qtyTransferredOut);
 
-    const projectPaymentRows = payments.filter((p) => p.purpose !== PaymentPurpose.SITE_VISIT);
+    const projectPaymentRows = payments.filter((p) => p.purpose === PaymentPurpose.PROJECT);
+    const labourPaymentRows = payments.filter((p) => p.purpose === PaymentPurpose.LABOUR);
     const siteVisitPaymentRows = payments.filter((p) => p.purpose === PaymentPurpose.SITE_VISIT);
     const projectPaymentsTotal = projectPaymentRows.reduce((s, p) => s + Number(p.amountCents), 0);
+    const labourPaymentsTotal = labourPaymentRows.reduce((s, p) => s + Number(p.amountCents), 0);
     const siteVisitFeesTotal = siteVisitPaymentRows.reduce((s, p) => s + Number(p.amountCents), 0);
-    const paymentsTotal = projectPaymentsTotal + siteVisitFeesTotal;
+    const paymentsTotal = projectPaymentsTotal + labourPaymentsTotal + siteVisitFeesTotal;
     const materialBuys = expenses.filter((e) => e.category === 'Materials');
     const materialBuyCents = materialBuys.reduce((s, e) => s + Number(e.amountCents), 0);
     const expenseTotal = expenses.reduce((s, e) => s + Number(e.amountCents), 0);
@@ -266,6 +282,7 @@ export class ReportsController {
       summary: {
         clientPaymentsCents: paymentsTotal,
         projectPaymentsCents: projectPaymentsTotal,
+        labourPaymentsCents: labourPaymentsTotal,
         siteVisitFeesCents: siteVisitFeesTotal,
         stockPurchaseExpenseCents: materialBuyCents,
         allExpensesCents: expenseTotal,

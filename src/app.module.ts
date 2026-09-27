@@ -22,10 +22,11 @@ import { StandPackagesModule } from './stand-packages/stand-packages.module';
 import { CatalogModule } from './catalog/catalog.module';
 import { SiteVisitsModule } from './site-visits/site-visits.module';
 import { RolesGuard } from './common/roles.decorator';
+import { LabourRevenueModule } from './labour-revenue/labour-revenue.module';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true, envFilePath: ['.env'] }),
+    ConfigModule.forRoot({ isGlobal: true, envFilePath: ['.env', '../../.env'] }),
     PrismaModule,
     AuthModule,
     UsersModule,
@@ -47,6 +48,7 @@ import { RolesGuard } from './common/roles.decorator';
     WhatsappModule,
     PrintingModule,
     InvoicesModule,
+    LabourRevenueModule,
   ],
   providers: [RolesGuard],
 })
