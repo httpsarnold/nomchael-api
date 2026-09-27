@@ -25,7 +25,21 @@ import { Type } from 'class-transformer';
 import { FundUseCategory, PropertyType } from '@prisma/client';
 import type { Response } from 'express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-import { LabourRevenueService } from './labour-revenue.service';
+import { ExportFormat, LabourRevenueService } from './labour-revenue.service';
+
+function sendExport(res: Response, buf: Buffer, baseName: string, format?: string) {
+  const pdf = format === 'pdf';
+  res.setHeader('Content-Type', pdf ? 'application/pdf' : 'text/csv; charset=utf-8');
+  res.setHeader(
+    'Content-Disposition',
+    `attachment; filename="${baseName}.${pdf ? 'pdf' : 'csv'}"`,
+  );
+  res.send(buf);
+}
+
+function exportFormat(format?: string): ExportFormat {
+  return format === 'pdf' ? 'pdf' : 'csv';
+}
 
 class CatchupDto {
   @IsOptional()
@@ -359,14 +373,9 @@ export class LabourRevenueController {
   }
 
   @Get('labour-catchup/export')
-  async exportCatchups(@Res() res: Response) {
-    const buf = await this.labour.exportCatchupsExcel();
-    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader(
-      'Content-Disposition',
-      'attachment; filename="labour-catchup.csv"',
-    );
-    res.send(buf);
+  async exportCatchups(@Res() res: Response, @Query('format') format?: string) {
+    const buf = await this.labour.exportCatchupsExcel(exportFormat(format));
+    sendExport(res, buf, 'labour-catchup', format);
   }
 
   @Get('labour-catchup/:id')
@@ -427,14 +436,13 @@ export class LabourRevenueController {
   }
 
   @Get('estates/:id/stage-report/export')
-  async exportEstateStageReport(@Param('id') id: string, @Res() res: Response) {
-    const buf = await this.labour.exportEstateStageReport(id);
-    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader(
-      'Content-Disposition',
-      `attachment; filename="estate-${id}-stages.csv"`,
-    );
-    res.send(buf);
+  async exportEstateStageReport(
+    @Param('id') id: string,
+    @Res() res: Response,
+    @Query('format') format?: string,
+  ) {
+    const buf = await this.labour.exportEstateStageReport(id, exportFormat(format));
+    sendExport(res, buf, `estate-${id}-stages`, format);
   }
 
   @Post('estates/:id/stages')
@@ -495,14 +503,13 @@ export class LabourRevenueController {
   }
 
   @Get('estates/:id/export')
-  async exportEstate(@Param('id') id: string, @Res() res: Response) {
-    const buf = await this.labour.exportEstateExcel(id);
-    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader(
-      'Content-Disposition',
-      `attachment; filename="estate-${id}.csv"`,
-    );
-    res.send(buf);
+  async exportEstate(
+    @Param('id') id: string,
+    @Res() res: Response,
+    @Query('format') format?: string,
+  ) {
+    const buf = await this.labour.exportEstateExcel(id, exportFormat(format));
+    sendExport(res, buf, `estate-${id}`, format);
   }
 
   @Post('bulk-labour')

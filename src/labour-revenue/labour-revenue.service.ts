@@ -15,7 +15,10 @@ import {
 import { randomUUID } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { serializeMoney } from '../common/money';
+import { buildTablePdf } from '../common/table-pdf';
 import { PaymentsService } from '../payments/payments.service';
+
+export type ExportFormat = 'csv' | 'pdf';
 
 type OwnerInput = {
   clientId?: string;
@@ -1148,7 +1151,10 @@ export class LabourRevenueService {
     };
   }
 
-  async exportEstateStageReport(estateId: string): Promise<Buffer> {
+  async exportEstateStageReport(
+    estateId: string,
+    format: ExportFormat = 'csv',
+  ): Promise<Buffer> {
     const report = await this.getEstateStageReport(estateId);
     const s = report.summary;
     const rows: unknown[][] = [
@@ -1191,6 +1197,13 @@ export class LabourRevenueService {
           : '',
       ]),
     ];
+    if (format === 'pdf') {
+      return buildTablePdf({
+        title: 'Estate stage report',
+        subtitle: `${report.estate.code} ${report.estate.name}`,
+        rows,
+      });
+    }
     return Buffer.from(toCsv(rows), 'utf8');
   }
 
@@ -1471,7 +1484,7 @@ export class LabourRevenueService {
     return { applied: appliedCount, estate: estateView };
   }
 
-  async exportEstateExcel(id: string): Promise<Buffer> {
+  async exportEstateExcel(id: string, format: ExportFormat = 'csv'): Promise<Buffer> {
     const estate = await this.getEstate(id);
     const rows: unknown[][] = [
       ['Estate', estate.name],
@@ -1522,10 +1535,17 @@ export class LabourRevenueService {
         h.trail.clientOwesCents / 100,
       ]);
     }
+    if (format === 'pdf') {
+      return buildTablePdf({
+        title: 'Estate labour statement',
+        subtitle: `${estate.code} ${estate.name}`,
+        rows,
+      });
+    }
     return Buffer.from(toCsv(rows), 'utf8');
   }
 
-  async exportCatchupsExcel(): Promise<Buffer> {
+  async exportCatchupsExcel(format: ExportFormat = 'csv'): Promise<Buffer> {
     const list = await this.listCatchups();
     const rows: unknown[][] = [
       [
@@ -1558,6 +1578,13 @@ export class LabourRevenueService {
         p.trail.stillAvailableCents / 100,
         p.trail.clientOwesCents / 100,
       ]);
+    }
+    if (format === 'pdf') {
+      return buildTablePdf({
+        title: 'Labour catch-up files',
+        rows,
+        firstBlockIsTable: true,
+      });
     }
     return Buffer.from(toCsv(rows), 'utf8');
   }

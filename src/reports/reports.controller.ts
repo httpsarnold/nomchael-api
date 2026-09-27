@@ -1,7 +1,9 @@
-import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Param, Query, Res, UseGuards } from '@nestjs/common';
 import { ExpenseScope, PaymentPurpose, ProjectStatus, StockMovementType } from '@prisma/client';
+import type { Response } from 'express';
 import { PrismaService } from '../prisma/prisma.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { buildTablePdf } from '../common/table-pdf';
 
 @Controller('reports')
 @UseGuards(JwtAuthGuard)
@@ -393,8 +395,33 @@ export class ReportsController {
     };
   }
 
+  @Get('company/accounting-pdf')
+  async accountingPdf(@Res() res: Response) {
+    const { rows, filename } = await this.accountingRows();
+    const buf = await buildTablePdf({
+      title: 'Income statement (accounting summary)',
+      rows: rows.map((r, i) => (i === 0 ? r : [r[0], Number(r[1])])),
+      firstBlockIsTable: true,
+    });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${filename.replace(/\.csv$/, '.pdf')}"`,
+    );
+    res.send(buf);
+  }
+
   @Get('company/accounting-csv')
   async accountingCsv() {
+    const { rows, filename, statement } = await this.accountingRows();
+    return {
+      filename,
+      csv: rows.map((r) => r.join(',')).join('\n'),
+      statement,
+    };
+  }
+
+  private async accountingRows() {
     const statement = await this.incomeStatement();
     const rows = [
       ['Account', 'Amount'],
@@ -410,7 +437,7 @@ export class ReportsController {
     ];
     return {
       filename: `nomchael-income-${new Date().toISOString().slice(0, 10)}.csv`,
-      csv: rows.map((r) => r.join(',')).join('\n'),
+      rows,
       statement,
     };
   }
