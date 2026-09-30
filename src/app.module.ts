@@ -23,6 +23,7 @@ import { CatalogModule } from './catalog/catalog.module';
 import { SiteVisitsModule } from './site-visits/site-visits.module';
 import { RolesGuard } from './common/roles.decorator';
 import { LabourRevenueModule } from './labour-revenue/labour-revenue.module';
+import { QuickQuotationsModule } from './quick-quotations/quick-quotations.module';
 
 @Module({
   imports: [
@@ -49,6 +50,7 @@ import { LabourRevenueModule } from './labour-revenue/labour-revenue.module';
     PrintingModule,
     InvoicesModule,
     LabourRevenueModule,
+    QuickQuotationsModule,
   ],
   providers: [RolesGuard],
 })

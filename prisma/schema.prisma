@@ -481,6 +481,43 @@ model Quotation {
   @@index([createdAt])
 }
 
+model QuickQuotation {
+  id            String    @id @default(cuid())
+  number        String    @unique
+  clientName    String
+  clientPhone   String?
+  clientAddress String?
+  title         String?
+  notes         String?
+  validUntil    DateTime?
+  subtotalCents BigInt    @default(0)
+  discountCents BigInt    @default(0)
+  totalCents    BigInt    @default(0)
+  createdById   String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  items QuickQuotationItem[]
+
+  @@index([createdAt])
+  @@index([clientName])
+}
+
+model QuickQuotationItem {
+  id               String   @id @default(cuid())
+  quickQuotationId String
+  sortOrder        Int
+  description      String
+  unit             String?
+  quantity         Float
+  unitPriceCents   BigInt
+  totalCents       BigInt
+
+  quickQuotation QuickQuotation @relation(fields: [quickQuotationId], references: [id], onDelete: Cascade)
+
+  @@index([quickQuotationId, sortOrder])
+}
+
 model QuotationLineItem {
   id              String       @id @default(cuid())
   quotationId     String
