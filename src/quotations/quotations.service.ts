@@ -6,6 +6,7 @@ import {
 import { LineItemType, ProjectStatus, QuotationStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { serializeMoney } from '../common/money';
+import { NOMCHAEL_LOGO_PNG } from '../common/logo';
 import { WhatsappService } from '../whatsapp/whatsapp.service';
 import { ConfigService } from '@nestjs/config';
 import PDFDocument from 'pdfkit';
@@ -328,9 +329,7 @@ export class QuotationsService {
       },
     });
     if (!q) throw new NotFoundException('Quotation not found');
-    const company = this.config.get('COMPANY_NAME') || 'Nomchael Construction';
     const currency = this.config.get('CURRENCY') || 'USD';
-    const structures = await this.structureMultiplier(q.projectId);
     const moneyFmt = (cents: bigint | number) =>
       `${currency} ${(Number(cents) / 100).toFixed(2)}`;
 
@@ -344,38 +343,33 @@ export class QuotationsService {
       const left = doc.page.margins.left;
       const width = doc.page.width - doc.page.margins.left - doc.page.margins.right;
 
-      doc.fontSize(18).fillColor('#0f172a').text(company, left, 48);
-      doc.fontSize(10).fillColor('#64748b').text('OFFICIAL QUOTATION STATEMENT', left, 72);
+      doc.image(NOMCHAEL_LOGO_PNG, left, 48, { height: 72 });
+      doc.fontSize(22).fillColor('#1e3a5f').text('QUOTATION', left, 72, {
+        width,
+        align: 'right',
+      });
       doc
-        .moveTo(left, 92)
-        .lineTo(left + width, 92)
+        .moveTo(left, 132)
+        .lineTo(left + width, 132)
         .strokeColor('#e5e7eb')
         .stroke();
 
       doc.fontSize(10);
-      let y = 108;
+      let y = 146;
       const meta = (label: string, value: string) => {
         doc.fillColor('#64748b').text(label, left, y, { width: 110 });
         doc.fillColor('#0f172a').text(value, left + 120, y, { width: width - 120 });
         y += 16;
       };
-      meta('Document', `QT-${q.project.code}-v${q.version}`);
-      meta('Status', q.status.replace(/_/g, ' '));
-      meta('Project', `${q.project.code} ${q.project.name}`);
+      meta('Quotation no.', `QT-${q.project.code}-v${q.version}`);
+      meta('Date', q.createdAt.toISOString().slice(0, 10));
       meta('Client', q.project.client.name);
-      meta('Phone', q.project.client.whatsapp || q.project.client.phone || '—');
-      meta('Site', q.project.address || q.project.client.address || '—');
-      {
-        const storeys = Math.max(1, Number((q.project as any).storeys) || 1);
-        const levels =
-          storeys <= 1
-            ? 'Ground floor only (no upstairs)'
-            : storeys === 2
-              ? 'Has upstairs (double storey)'
-              : `${storeys} storeys (has upstairs)`;
-        meta('Levels', levels);
+      if (q.project.client.whatsapp || q.project.client.phone) {
+        meta('Phone', q.project.client.whatsapp || q.project.client.phone);
       }
-      if (structures.count > 1) meta('Structures', `${structures.count} ${structures.label}`);
+      if (q.project.address || q.project.client.address) {
+        meta('Site', q.project.address || q.project.client.address || '');
+      }
       y += 10;
 
       doc.fontSize(11).fillColor('#0f172a').text('Line items', left, y);
@@ -427,16 +421,6 @@ export class QuotationsService {
         width,
         align: 'right',
       });
-      y += 28;
-      doc
-        .fontSize(9)
-        .fillColor('#64748b')
-        .text(
-          'Acceptance by the client authorises Nomchael to open the project file after MD approval.',
-          left,
-          y,
-          { width },
-        );
       doc.end();
     });
   }

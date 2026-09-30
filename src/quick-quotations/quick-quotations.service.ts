@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import PDFDocument from 'pdfkit';
 import { PrismaService } from '../prisma/prisma.service';
 import { serializeMoney } from '../common/money';
+import { NOMCHAEL_LOGO_PNG } from '../common/logo';
 
 export type QuickQuotationItemInput = {
   description: string;
@@ -144,7 +145,6 @@ export class QuickQuotationsService {
       include: { items: { orderBy: { sortOrder: 'asc' } } },
     });
     if (!q) throw new NotFoundException('Quotation not found');
-    const company = this.config.get('COMPANY_NAME') || 'Nomchael Construction';
     const currency = this.config.get('CURRENCY') || 'USD';
     const money = (cents: bigint | number) =>
       `${currency} ${(Number(cents) / 100).toLocaleString('en-US', {
@@ -167,9 +167,12 @@ export class QuickQuotationsService {
       const bottom = doc.page.height - doc.page.margins.bottom;
       let y = 48;
 
-      doc.fontSize(18).fillColor('#0f172a').text(company, left, y);
-      doc.fontSize(20).fillColor('#b45309').text('QUOTATION', left, y, { width, align: 'right' });
-      y += 30;
+      doc.image(NOMCHAEL_LOGO_PNG, left, y, { height: 72 });
+      doc.fontSize(22).fillColor('#1e3a5f').text('QUOTATION', left, y + 24, {
+        width,
+        align: 'right',
+      });
+      y += 84;
       doc.moveTo(left, y).lineTo(left + width, y).strokeColor('#e5e7eb').stroke();
       y += 14;
 
