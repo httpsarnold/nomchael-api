@@ -481,41 +481,70 @@ model Quotation {
   @@index([createdAt])
 }
 
-model QuickQuotation {
-  id            String    @id @default(cuid())
-  number        String    @unique
-  clientName    String
-  clientPhone   String?
-  clientAddress String?
-  title         String?
-  notes         String?
-  validUntil    DateTime?
-  subtotalCents BigInt    @default(0)
-  discountCents BigInt    @default(0)
-  totalCents    BigInt    @default(0)
-  createdById   String?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+enum QuickQuotationLineKind {
+  MATERIAL
+  LABOUR
+}
 
-  items QuickQuotationItem[]
+model QuickQuotation {
+  id                  String    @id @default(cuid())
+  number              String    @unique
+  clientName          String
+  clientPhone         String?
+  clientAddress       String?
+  title               String?
+  subject             String    @default("BILL OF QUANTITIES")
+  quoteDate           DateTime  @default(now())
+  preparedBy          String?
+  notes               String?
+  validUntil          DateTime?
+  materialsTotalCents BigInt    @default(0)
+  labourTotalCents    BigInt    @default(0)
+  subtotalCents       BigInt    @default(0)
+  discountCents       BigInt    @default(0)
+  totalCents          BigInt    @default(0)
+  createdById         String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  sections QuickQuotationSection[]
+  items    QuickQuotationItem[]
 
   @@index([createdAt])
   @@index([clientName])
 }
 
+model QuickQuotationSection {
+  id                  String @id @default(cuid())
+  quickQuotationId    String
+  sortOrder           Int
+  name                String
+  materialsTotalCents BigInt @default(0)
+  labourTotalCents    BigInt @default(0)
+
+  quickQuotation QuickQuotation       @relation(fields: [quickQuotationId], references: [id], onDelete: Cascade)
+  items          QuickQuotationItem[]
+
+  @@index([quickQuotationId, sortOrder])
+}
+
 model QuickQuotationItem {
-  id               String   @id @default(cuid())
+  id               String                 @id @default(cuid())
   quickQuotationId String
+  sectionId        String?
+  kind             QuickQuotationLineKind @default(MATERIAL)
   sortOrder        Int
   description      String
   unit             String?
-  quantity         Float
-  unitPriceCents   BigInt
+  quantity         Float?
+  unitPriceCents   BigInt?
   totalCents       BigInt
 
-  quickQuotation QuickQuotation @relation(fields: [quickQuotationId], references: [id], onDelete: Cascade)
+  quickQuotation QuickQuotation         @relation(fields: [quickQuotationId], references: [id], onDelete: Cascade)
+  section        QuickQuotationSection? @relation(fields: [sectionId], references: [id], onDelete: Cascade)
 
   @@index([quickQuotationId, sortOrder])
+  @@index([sectionId, kind, sortOrder])
 }
 
 model QuotationLineItem {

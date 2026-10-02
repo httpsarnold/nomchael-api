@@ -26,22 +26,57 @@ import type { Response } from 'express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { QuickQuotationsService } from './quick-quotations.service';
 
-class QuickQuotationItemDto {
-  @IsString()
-  @MinLength(1)
-  description!: string;
+class QuickQuotationMaterialDto {
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  quantity?: number | null;
 
   @IsOptional()
   @IsString()
   unit?: string;
 
+  @IsString()
+  @MinLength(1)
+  description!: string;
+
+  @IsOptional()
   @IsNumber()
   @Min(0)
-  quantity!: number;
+  unitPriceCents?: number | null;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  totalCents?: number | null;
+}
+
+class QuickQuotationLabourDto {
+  @IsString()
+  @MinLength(1)
+  description!: string;
 
   @IsNumber()
   @Min(0)
-  unitPriceCents!: number;
+  amountCents!: number;
+}
+
+class QuickQuotationSectionDto {
+  @IsOptional()
+  @IsString()
+  name?: string;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => QuickQuotationMaterialDto)
+  materials?: QuickQuotationMaterialDto[];
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => QuickQuotationLabourDto)
+  labour?: QuickQuotationLabourDto[];
 }
 
 class QuickQuotationDto {
@@ -63,6 +98,18 @@ class QuickQuotationDto {
 
   @IsOptional()
   @IsString()
+  subject?: string;
+
+  @IsOptional()
+  @IsString()
+  quoteDate?: string;
+
+  @IsOptional()
+  @IsString()
+  preparedBy?: string;
+
+  @IsOptional()
+  @IsString()
   notes?: string;
 
   @IsOptional()
@@ -77,8 +124,8 @@ class QuickQuotationDto {
   @IsArray()
   @ArrayMinSize(1)
   @ValidateNested({ each: true })
-  @Type(() => QuickQuotationItemDto)
-  items!: QuickQuotationItemDto[];
+  @Type(() => QuickQuotationSectionDto)
+  sections!: QuickQuotationSectionDto[];
 }
 
 @Controller('quick-quotations')
