@@ -353,6 +353,11 @@ class EstateLedgerDto {
   @IsString()
   description?: string;
 
+  /** COMPANY = company expense, PROJECT = house/project expense. Required when kind is EXPENSE. */
+  @IsOptional()
+  @IsString()
+  expenseCategory?: 'COMPANY' | 'PROJECT';
+
   @IsOptional()
   @IsString()
   projectId?: string;

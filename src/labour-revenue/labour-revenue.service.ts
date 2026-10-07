@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import {
   FundUseCategory,
+  EstateExpenseCategory,
   EstateLedgerKind,
   PaymentMethod,
   PaymentPurpose,
@@ -326,7 +327,12 @@ export class LabourRevenueService {
         : Promise.resolve([]),
       this.prisma.estateLedgerEntry.findMany({
         where: { estateProgrammeId: { in: estateIds } },
-        select: { estateProgrammeId: true, kind: true, amountCents: true },
+        select: {
+          estateProgrammeId: true,
+          kind: true,
+          expenseCategory: true,
+          amountCents: true,
+        },
       }),
     ]);
 
@@ -352,16 +358,30 @@ export class LabourRevenueService {
       projectsByEstate.get(key)!.push(p);
     }
 
-    const ledgerByEstate = new Map<string, { expenses: number; borrowings: number; repayments: number }>();
+    const ledgerByEstate = new Map<
+      string,
+      {
+        expenses: number;
+        companyExpenses: number;
+        projectExpenses: number;
+        borrowings: number;
+        repayments: number;
+      }
+    >();
     for (const e of ledger) {
       const cur = ledgerByEstate.get(e.estateProgrammeId) || {
         expenses: 0,
+        companyExpenses: 0,
+        projectExpenses: 0,
         borrowings: 0,
         repayments: 0,
       };
       const amt = Number(e.amountCents);
-      if (e.kind === EstateLedgerKind.EXPENSE) cur.expenses += amt;
-      else if (e.kind === EstateLedgerKind.BORROWING) cur.borrowings += amt;
+      if (e.kind === EstateLedgerKind.EXPENSE) {
+        cur.expenses += amt;
+        if (e.expenseCategory === EstateExpenseCategory.PROJECT) cur.projectExpenses += amt;
+        else cur.companyExpenses += amt;
+      } else if (e.kind === EstateLedgerKind.BORROWING) cur.borrowings += amt;
       else if (e.kind === EstateLedgerKind.REPAYMENT) cur.repayments += amt;
       ledgerByEstate.set(e.estateProgrammeId, cur);
     }
@@ -380,6 +400,8 @@ export class LabourRevenueService {
       }
       const led = ledgerByEstate.get(estate.id) || {
         expenses: 0,
+        companyExpenses: 0,
+        projectExpenses: 0,
         borrowings: 0,
         repayments: 0,
       };
@@ -401,6 +423,8 @@ export class LabourRevenueService {
           cashReceivedCents,
           fundUsesCents,
           expensesCents: led.expenses,
+          companyExpensesCents: led.companyExpenses,
+          projectExpensesCents: led.projectExpenses,
           borrowingsCents: led.borrowings,
           repaymentsCents: led.repayments,
           borrowingsOutstandingCents: led.borrowings - led.repayments,
@@ -498,9 +522,17 @@ export class LabourRevenueService {
     const otherFundUsesCents = fundUsesCents - labourUsedCents;
 
     const ledger = estate.ledgerEntries || [];
-    const expensesCents = ledger
-      .filter((e: any) => e.kind === 'EXPENSE' || e.kind === EstateLedgerKind.EXPENSE)
+    const expenseRows = ledger.filter(
+      (e: any) => e.kind === 'EXPENSE' || e.kind === EstateLedgerKind.EXPENSE,
+    );
+    const expensesCents = expenseRows.reduce(
+      (s: number, e: any) => s + Number(e.amountCents),
+      0,
+    );
+    const projectExpensesCents = expenseRows
+      .filter((e: any) => e.expenseCategory === EstateExpenseCategory.PROJECT)
       .reduce((s: number, e: any) => s + Number(e.amountCents), 0);
+    const companyExpensesCents = expensesCents - projectExpensesCents;
     const borrowingsCents = ledger
       .filter((e: any) => e.kind === 'BORROWING' || e.kind === EstateLedgerKind.BORROWING)
       .reduce((s: number, e: any) => s + Number(e.amountCents), 0);
@@ -509,8 +541,21 @@ export class LabourRevenueService {
       .reduce((s: number, e: any) => s + Number(e.amountCents), 0);
     const borrowingsOutstandingCents = borrowingsCents - repaymentsCents;
 
-    const cashAtHandCents =
-      cashReceivedCents - fundUsesCents - expensesCents - borrowingsCents + repaymentsCents;
+    // Labour account: cash received for labour, spent on labour / project costs / borrowings.
+    const labourBalanceCents =
+      cashReceivedCents -
+      labourUsedCents -
+      otherFundUsesCents -
+      projectExpensesCents -
+      borrowingsCents +
+      repaymentsCents;
+
+    // Company / profit account: margin on the file after labour + project costs, then company spend.
+    const profitEarnedCents = netDueCents - labourUsedCents - projectExpensesCents;
+    const profitBalanceCents = profitEarnedCents - companyExpensesCents;
+
+    // Physical cash still one pot: labour cash left after company expenses paid from profit.
+    const cashAtHandCents = labourBalanceCents - companyExpensesCents;
 
     const trends = {
       houseCount: houses.length,
@@ -522,9 +567,14 @@ export class LabourRevenueService {
       labourUsedCents,
       otherFundUsesCents,
       expensesCents,
+      companyExpensesCents,
+      projectExpensesCents,
       borrowingsCents,
       repaymentsCents,
       borrowingsOutstandingCents,
+      labourBalanceCents,
+      profitEarnedCents,
+      profitBalanceCents,
       stillAvailableCents: cashAtHandCents,
       cashAtHandCents,
       clientOwesCents: houses.reduce(
@@ -543,15 +593,19 @@ export class LabourRevenueService {
   async getEstateStatement(estateId: string) {
     const estate = await this.getEstate(estateId);
     const t = estate.trends;
-    const lines: {
+    type LedgerLine = {
       date: string;
       description: string;
       debitCents: number;
       creditCents: number;
       section: string;
-    }[] = [];
+    };
 
-    lines.push({
+    const labourLines: LedgerLine[] = [];
+    const profitLines: LedgerLine[] = [];
+
+    // --- Labour account: cash for labour work ---
+    labourLines.push({
       date: '',
       description: `Labour quoted (${t.houseCount} houses)`,
       debitCents: 0,
@@ -559,7 +613,7 @@ export class LabourRevenueService {
       section: 'CONTRACT',
     });
     if (t.discountCents > 0) {
-      lines.push({
+      labourLines.push({
         date: '',
         description: 'Discounts granted to clients',
         debitCents: t.discountCents,
@@ -567,9 +621,9 @@ export class LabourRevenueService {
         section: 'CONTRACT',
       });
     }
-    lines.push({
+    labourLines.push({
       date: '',
-      description: 'Net due after discount',
+      description: 'Net labour due after discount',
       debitCents: 0,
       creditCents: t.netDueCents,
       section: 'CONTRACT',
@@ -577,9 +631,11 @@ export class LabourRevenueService {
 
     for (const h of estate.projects || []) {
       for (const p of h.payments || []) {
-        lines.push({
+        labourLines.push({
           date: p.paidAt || '',
-          description: `Cash received · ${h.name} · ${h.client?.name || ''} · ${p.receiptNumber || ''}`,
+          description: `Labour cash in · ${h.name} · ${h.client?.name || ''} · ${
+            p.receiptNumber || ''
+          }`,
           debitCents: Number(p.amountCents),
           creditCents: 0,
           section: 'INCOME',
@@ -587,7 +643,7 @@ export class LabourRevenueService {
       }
       for (const u of h.fundUses || []) {
         const isLabour = u.category === 'PAID_TO_LABOUR';
-        lines.push({
+        labourLines.push({
           date: u.usedAt || '',
           description: `${isLabour ? 'Labour used' : `Fund use (${u.category})`} · ${h.name}${
             u.description ? ` · ${u.description}` : ''
@@ -599,22 +655,32 @@ export class LabourRevenueService {
       }
     }
 
+    const houseNameById = new Map<string, string>(
+      (estate.projects || []).map((h: any) => [h.id, h.name]),
+    );
+
     for (const e of estate.ledgerEntries || []) {
       const kind = String(e.kind);
       if (kind === 'EXPENSE') {
-        lines.push({
+        const isProject = e.expenseCategory === EstateExpenseCategory.PROJECT;
+        const houseLabel =
+          isProject && e.projectId ? houseNameById.get(e.projectId) || 'House' : null;
+        const desc = `${isProject ? 'Project expense' : 'Company expense'}${
+          houseLabel ? ` · ${houseLabel}` : ''
+        } · ${e.partyName || 'Estate'}${e.description ? ` · ${e.description}` : ''}`;
+        const line: LedgerLine = {
           date: e.entryDate || '',
-          description: `Expense · ${e.partyName || 'Estate'}${
-            e.description ? ` · ${e.description}` : ''
-          }`,
+          description: desc,
           debitCents: 0,
           creditCents: Number(e.amountCents),
-          section: 'EXPENSE',
-        });
+          section: isProject ? 'PROJECT_EXPENSE' : 'COMPANY_EXPENSE',
+        };
+        if (isProject) labourLines.push(line);
+        else profitLines.push(line);
       } else if (kind === 'BORROWING') {
-        lines.push({
+        labourLines.push({
           date: e.entryDate || '',
-          description: `Borrowed from estate · ${e.partyName || 'Borrower'}${
+          description: `Borrowed from labour pot · ${e.partyName || 'Borrower'}${
             e.description ? ` · ${e.description}` : ''
           } (must repay)`,
           debitCents: Number(e.amountCents),
@@ -622,9 +688,9 @@ export class LabourRevenueService {
           section: 'BORROWING',
         });
       } else if (kind === 'REPAYMENT') {
-        lines.push({
+        labourLines.push({
           date: e.entryDate || '',
-          description: `Repayment · ${e.partyName || 'Borrower'}${
+          description: `Repayment into labour pot · ${e.partyName || 'Borrower'}${
             e.description ? ` · ${e.description}` : ''
           }`,
           debitCents: Number(e.amountCents),
@@ -634,16 +700,56 @@ export class LabourRevenueService {
       }
     }
 
-    lines.push({
+    labourLines.push({
       date: '',
-      description: 'Cash at hand (on ground)',
-      debitCents: t.cashAtHandCents,
+      description: 'Labour account balance',
+      debitCents: t.labourBalanceCents,
       creditCents: 0,
       section: 'BALANCE',
     });
 
-    const totalDebit = lines.reduce((s, l) => s + l.debitCents, 0);
-    const totalCredit = lines.reduce((s, l) => s + l.creditCents, 0);
+    // --- Company / profit account ---
+    profitLines.unshift({
+      date: '',
+      description:
+        'Profit earned (net labour due − labour used − project expenses)',
+      debitCents: 0,
+      creditCents: Math.max(0, t.profitEarnedCents),
+      section: 'PROFIT',
+    });
+    if (t.profitEarnedCents < 0) {
+      profitLines.unshift({
+        date: '',
+        description: 'Loss on labour file (labour used + project expenses above net due)',
+        debitCents: Math.abs(t.profitEarnedCents),
+        creditCents: 0,
+        section: 'PROFIT',
+      });
+    }
+    profitLines.push({
+      date: '',
+      description: 'Company / profit account balance',
+      debitCents: Math.max(0, t.profitBalanceCents),
+      creditCents: t.profitBalanceCents < 0 ? Math.abs(t.profitBalanceCents) : 0,
+      section: 'BALANCE',
+    });
+
+    const sumDr = (rows: LedgerLine[]) => rows.reduce((s, l) => s + l.debitCents, 0);
+    const sumCr = (rows: LedgerLine[]) => rows.reduce((s, l) => s + l.creditCents, 0);
+
+    // Combined lines kept for older UI / exports that still read `lines`.
+    const lines = [
+      ...labourLines.map((l) => ({ ...l, account: 'LABOUR' })),
+      ...profitLines.map((l) => ({ ...l, account: 'COMPANY' })),
+      {
+        date: '',
+        description: 'Cash at hand (labour balance − company expenses)',
+        debitCents: t.cashAtHandCents,
+        creditCents: 0,
+        section: 'BALANCE',
+        account: 'CASH',
+      },
+    ];
 
     const borrowersMap = new Map<string, number>();
     for (const e of estate.ledgerEntries || []) {
@@ -659,7 +765,6 @@ export class LabourRevenueService {
       .map(([name, outstandingCents]) => ({
         name,
         outstandingCents,
-        // Financially: they owe the estate (debtors). Shown as "borrowers to repay".
         role: outstandingCents > 0 ? 'DEBTOR' : 'OVERPAID',
       }));
 
@@ -667,10 +772,15 @@ export class LabourRevenueService {
       .filter((e: any) => String(e.kind) === 'EXPENSE')
       .map((e: any) => ({
         id: e.id,
+        expenseCategory: e.expenseCategory || EstateExpenseCategory.COMPANY,
+        projectId: e.projectId || null,
+        projectName: e.projectId ? houseNameById.get(e.projectId) || null : null,
         partyName: e.partyName,
         description: e.description,
         amountCents: Number(e.amountCents),
         entryDate: e.entryDate,
+        account:
+          e.expenseCategory === EstateExpenseCategory.PROJECT ? 'LABOUR' : 'COMPANY',
       }));
 
     return serializeMoney({
@@ -681,12 +791,25 @@ export class LabourRevenueService {
         houseCount: t.houseCount,
       },
       summary: t,
+      labourAccount: {
+        name: 'Labour account',
+        balanceCents: t.labourBalanceCents,
+        lines: labourLines,
+        totals: { debitCents: sumDr(labourLines), creditCents: sumCr(labourLines) },
+      },
+      companyAccount: {
+        name: 'Company / profit account',
+        earnedCents: t.profitEarnedCents,
+        balanceCents: t.profitBalanceCents,
+        lines: profitLines,
+        totals: { debitCents: sumDr(profitLines), creditCents: sumCr(profitLines) },
+      },
       lines,
-      totals: { debitCents: totalDebit, creditCents: totalCredit },
+      totals: { debitCents: sumDr(lines), creditCents: sumCr(lines) },
       expenses,
       borrowers,
       note:
-        'Borrowings taken from this estate must be repaid (debtors of the estate). Expenses reduce cash at hand. Labour used reduces cash at hand.',
+        'Two accounts: project expenses come from the labour account; company expenses come from profit (net labour due − labour used − project expenses). Cash at hand = labour balance − company expenses. Borrowings come from the labour pot and must be repaid.',
     });
   }
 
@@ -697,6 +820,7 @@ export class LabourRevenueService {
       amountCents: number;
       partyName?: string;
       description?: string;
+      expenseCategory?: 'COMPANY' | 'PROJECT' | EstateExpenseCategory;
       projectId?: string;
       entryDate?: string;
       createdById?: string;
@@ -715,11 +839,36 @@ export class LabourRevenueService {
       throw new BadRequestException('Borrower / party name is required');
     }
 
+    let expenseCategory: EstateExpenseCategory | null = null;
+    let projectId: string | null = null;
+    if (kind === EstateLedgerKind.EXPENSE) {
+      const cat = String(dto.expenseCategory || 'COMPANY').toUpperCase() as EstateExpenseCategory;
+      if (!Object.values(EstateExpenseCategory).includes(cat)) {
+        throw new BadRequestException('Expense category must be COMPANY or PROJECT');
+      }
+      expenseCategory = cat;
+      if (cat === EstateExpenseCategory.PROJECT) {
+        if (!dto.projectId?.trim()) {
+          throw new BadRequestException('Choose the house for a project expense');
+        }
+        const house = await this.prisma.project.findFirst({
+          where: { id: dto.projectId, estateProgrammeId: estateId },
+          select: { id: true },
+        });
+        if (!house) throw new BadRequestException('That house is not on this estate');
+        projectId = house.id;
+      }
+      if (!dto.description?.trim()) {
+        throw new BadRequestException('Say what the expense was for');
+      }
+    }
+
     await this.prisma.estateLedgerEntry.create({
       data: {
         estateProgrammeId: estateId,
-        projectId: dto.projectId || null,
+        projectId,
         kind,
+        expenseCategory,
         amountCents: BigInt(Math.round(dto.amountCents)),
         partyName: dto.partyName?.trim() || null,
         description: dto.description?.trim() || null,

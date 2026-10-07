@@ -117,6 +117,11 @@ enum EstateLedgerKind {
   REPAYMENT
 }
 
+enum EstateExpenseCategory {
+  COMPANY
+  PROJECT
+}
+
 enum PaymentMethod {
   CASH
   BANK_TRANSFER
@@ -285,23 +290,25 @@ model EstateProgramme {
 }
 
 model EstateLedgerEntry {
-  id                String           @id @default(cuid())
+  id                String                 @id @default(cuid())
   estateProgrammeId String
   projectId         String?
   kind              EstateLedgerKind
+  expenseCategory   EstateExpenseCategory?
   amountCents       BigInt
   partyName         String?
   description       String?
-  entryDate         DateTime         @default(now())
+  entryDate         DateTime               @default(now())
   createdById       String?
-  createdAt         DateTime         @default(now())
-  updatedAt         DateTime         @updatedAt
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
 
   estate    EstateProgramme @relation(fields: [estateProgrammeId], references: [id], onDelete: Cascade)
   createdBy User?           @relation(fields: [createdById], references: [id])
 
   @@index([estateProgrammeId, entryDate])
   @@index([kind])
+  @@index([expenseCategory])
   @@index([createdById])
 }
 
