@@ -282,11 +282,53 @@ model EstateProgramme {
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
 
-  projects     Project[]
+  projects      Project[]
   ledgerEntries EstateLedgerEntry[]
+  boqs          EstateBoq[]
 
   @@index([name])
   @@index([createdAt])
+}
+
+model EstateBoq {
+  id                String   @id @default(cuid())
+  estateProgrammeId String
+  name              String
+  notes             String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  estate   EstateProgramme  @relation(fields: [estateProgrammeId], references: [id], onDelete: Cascade)
+  lines    EstateBoqLine[]
+  projects Project[]
+
+  @@index([estateProgrammeId, name])
+}
+
+model EstateBoqLine {
+  id          String  @id @default(cuid())
+  estateBoqId String
+  sectionName String?
+  stageName   String
+  sortOrder   Int
+  amountCents BigInt
+
+  boq EstateBoq @relation(fields: [estateBoqId], references: [id], onDelete: Cascade)
+
+  @@index([estateBoqId, sortOrder])
+}
+
+model ProjectBoqLine {
+  id          String  @id @default(cuid())
+  projectId   String
+  sectionName String?
+  stageName   String
+  sortOrder   Int
+  amountCents BigInt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, sortOrder])
 }
 
 model EstateLedgerEntry {
@@ -341,6 +383,9 @@ model Project {
   labourQuotedCents BigInt      @default(0)
   discountCents     BigInt      @default(0)
   discountReason    String?
+  estateBoqId       String?
+  allocatedLabourCents BigInt?
+  buildingMatchDiscountCents BigInt @default(0)
   catchupStageLabel String?
   currentStageLabel String?
   currentStageUpdatedAt DateTime?
@@ -354,6 +399,8 @@ model Project {
   client           Client              @relation(fields: [clientId], references: [id])
   standPackage     StandPackage?       @relation(fields: [standPackageId], references: [id])
   estateProgramme  EstateProgramme?    @relation(fields: [estateProgrammeId], references: [id])
+  estateBoq        EstateBoq?          @relation(fields: [estateBoqId], references: [id], onDelete: SetNull)
+  boqLines         ProjectBoqLine[]
   stages           ProjectStage[]
   rooms            ProjectRoom[]
   quotations       Quotation[]
@@ -371,6 +418,7 @@ model Project {
   @@index([clientId, name])
   @@index([standPackageId, standNumber])
   @@index([estateProgrammeId, unitNumber])
+  @@index([estateBoqId])
   @@index([kind, status])
   @@index([status])
   @@index([propertyType])

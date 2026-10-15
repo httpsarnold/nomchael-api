@@ -224,6 +224,46 @@ class BulkLabourDto {
   notes?: string;
 }
 
+class EstateBoqLineDto {
+  @IsOptional()
+  @IsString()
+  sectionName?: string;
+
+  @IsString()
+  @MinLength(1)
+  stageName!: string;
+
+  @IsOptional()
+  @IsNumber()
+  sortOrder?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  amountCents?: number;
+}
+
+class EstateBoqDto {
+  @IsString()
+  @MinLength(1)
+  name!: string;
+
+  @IsOptional()
+  @IsString()
+  notes?: string;
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => EstateBoqLineDto)
+  lines!: EstateBoqLineDto[];
+}
+
+class ApplyEstateBoqDto {
+  @IsArray()
+  @IsString({ each: true })
+  projectIds!: string[];
+}
+
 class AddEstateHouseDto {
   @IsOptional()
   @IsString()
@@ -263,6 +303,10 @@ class AddEstateHouseDto {
   @IsNumber()
   @Min(0)
   cashReceivedCents?: number;
+
+  @IsOptional()
+  @IsString()
+  estateBoqId?: string;
 }
 
 class UpdateEstateHouseDto {
@@ -450,6 +494,35 @@ export class LabourRevenueController {
     sendExport(res, buf, `estate-${id}-stages`, format);
   }
 
+  @Post('estates/:id/boqs')
+  createEstateBoq(@Param('id') id: string, @Body() dto: EstateBoqDto) {
+    return this.labour.createEstateBoq(id, dto);
+  }
+
+  @Patch('estates/:id/boqs/:boqId')
+  updateEstateBoq(
+    @Param('id') id: string,
+    @Param('boqId') boqId: string,
+    @Body() dto: EstateBoqDto,
+  ) {
+    return this.labour.updateEstateBoq(id, boqId, dto);
+  }
+
+  @Delete('estates/:id/boqs/:boqId')
+  deleteEstateBoq(@Param('id') id: string, @Param('boqId') boqId: string) {
+    return this.labour.deleteEstateBoq(id, boqId);
+  }
+
+  @Post('estates/:id/boqs/:boqId/apply')
+  applyEstateBoq(
+    @Param('id') id: string,
+    @Param('boqId') boqId: string,
+    @Body() dto: ApplyEstateBoqDto,
+    @Req() req: { user: { id: string } },
+  ) {
+    return this.labour.applyEstateBoq(id, boqId, { ...dto, createdById: req.user.id });
+  }
+
   @Post('estates/:id/stages')
   bulkAssignStages(
     @Param('id') id: string,
@@ -457,6 +530,15 @@ export class LabourRevenueController {
     @Req() req: { user: { id: string } },
   ) {
     return this.labour.bulkAssignStages(id, { ...dto, createdById: req.user.id });
+  }
+
+  @Delete('estates/:estateId/houses/:projectId/boq')
+  clearEstateHouseBoq(
+    @Param('estateId') estateId: string,
+    @Param('projectId') projectId: string,
+    @Req() req: { user: { id: string } },
+  ) {
+    return this.labour.clearEstateHouseBoq(estateId, projectId, req.user.id);
   }
 
   @Patch('estates/:estateId/houses/:projectId')

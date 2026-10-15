@@ -65,12 +65,14 @@ export class LabourRevenueService {
   private moneyTrail(project: {
     labourQuotedCents: bigint;
     discountCents: bigint;
+    buildingMatchDiscountCents?: bigint | null;
     payments?: { purpose: PaymentPurpose; amountCents: bigint; deletedAt: Date | null }[];
     fundUses?: { amountCents: bigint }[];
   }) {
     const labourQuotedCents = Number(project.labourQuotedCents || 0n);
     const discountCents = Number(project.discountCents || 0n);
-    const netDueCents = labourQuotedCents - discountCents;
+    const buildingMatchDiscountCents = Number(project.buildingMatchDiscountCents || 0n);
+    const netDueCents = labourQuotedCents - discountCents - buildingMatchDiscountCents;
     const cashReceivedCents = (project.payments || [])
       .filter((p) => !p.deletedAt && p.purpose === PaymentPurpose.LABOUR)
       .reduce((s, p) => s + Number(p.amountCents), 0);
@@ -81,6 +83,7 @@ export class LabourRevenueService {
     return {
       labourQuotedCents,
       discountCents,
+      buildingMatchDiscountCents,
       netDueCents,
       cashReceivedCents,
       fundUsesCents,
@@ -305,6 +308,7 @@ export class LabourRevenueService {
         estateProgrammeId: true,
         labourQuotedCents: true,
         discountCents: true,
+        buildingMatchDiscountCents: true,
       },
     });
     const projectIds = projects.map((p) => p.id);
@@ -390,11 +394,13 @@ export class LabourRevenueService {
       const houses = projectsByEstate.get(estate.id) || [];
       let labourQuotedCents = 0;
       let discountCents = 0;
+      let buildingMatchDiscountCents = 0;
       let cashReceivedCents = 0;
       let fundUsesCents = 0;
       for (const h of houses) {
         labourQuotedCents += Number(h.labourQuotedCents);
         discountCents += Number(h.discountCents);
+        buildingMatchDiscountCents += Number(h.buildingMatchDiscountCents);
         cashReceivedCents += cashByProject.get(h.id) || 0;
         fundUsesCents += usesByProject.get(h.id) || 0;
       }
@@ -405,7 +411,7 @@ export class LabourRevenueService {
         borrowings: 0,
         repayments: 0,
       };
-      const netDueCents = labourQuotedCents - discountCents;
+      const netDueCents = labourQuotedCents - discountCents - buildingMatchDiscountCents;
       const cashAtHandCents =
         cashReceivedCents -
         fundUsesCents -
@@ -419,6 +425,7 @@ export class LabourRevenueService {
           houseCount: houses.length,
           labourQuotedCents,
           discountCents,
+          buildingMatchDiscountCents,
           netDueCents,
           cashReceivedCents,
           fundUsesCents,
@@ -449,6 +456,20 @@ export class LabourRevenueService {
             labourQuotedCents: true,
             discountCents: true,
             discountReason: true,
+            estateBoqId: true,
+            allocatedLabourCents: true,
+            buildingMatchDiscountCents: true,
+            estateBoq: { select: { id: true, name: true } },
+            boqLines: {
+              orderBy: { sortOrder: 'asc' },
+              select: {
+                id: true,
+                stageName: true,
+                sectionName: true,
+                sortOrder: true,
+                amountCents: true,
+              },
+            },
             catchupStageLabel: true,
             currentStageLabel: true,
             currentStageUpdatedAt: true,
@@ -478,6 +499,10 @@ export class LabourRevenueService {
           },
           orderBy: { unitNumber: 'asc' },
         },
+        boqs: {
+          orderBy: { createdAt: 'asc' },
+          include: { lines: { orderBy: { sortOrder: 'asc' } } },
+        },
       },
     });
     if (!estate) throw new NotFoundException('Estate not found');
@@ -485,21 +510,33 @@ export class LabourRevenueService {
       where: { estateProgrammeId: id },
       orderBy: { entryDate: 'desc' },
     });
-    return this.serializeEstate({ ...estate, ledgerEntries: ledger } as any);
+    const stageCatalog = await this.stageCatalog();
+    return this.serializeEstate({ ...estate, ledgerEntries: ledger, stageCatalog } as any);
   }
 
   private serializeEstate(estate: any) {
     if (!estate) throw new NotFoundException('Estate not found');
-    const houses = (estate.projects || []).map((p: any) => ({
-      ...p,
-      trail: this.moneyTrail(p),
-    }));
+    const catalog = estate.stageCatalog || [];
+    const houses = (estate.projects || []).map((p: any) => {
+      const priced = (p.boqLines || []).length
+        ? this.priceSnapshot(p.boqLines, p.catchupStageLabel, catalog)
+        : null;
+      return {
+        ...p,
+        trail: this.moneyTrail(p),
+        boqStages: priced?.stages || [],
+      };
+    });
     const labourQuotedCents = houses.reduce(
       (s: number, h: any) => s + h.trail.labourQuotedCents,
       0,
     );
     const discountCents = houses.reduce(
       (s: number, h: any) => s + h.trail.discountCents,
+      0,
+    );
+    const buildingMatchDiscountCents = houses.reduce(
+      (s: number, h: any) => s + h.trail.buildingMatchDiscountCents,
       0,
     );
     const netDueCents = houses.reduce((s: number, h: any) => s + h.trail.netDueCents, 0);
@@ -561,6 +598,7 @@ export class LabourRevenueService {
       houseCount: houses.length,
       labourQuotedCents,
       discountCents,
+      buildingMatchDiscountCents,
       netDueCents,
       cashReceivedCents,
       fundUsesCents,
@@ -582,8 +620,9 @@ export class LabourRevenueService {
         0,
       ),
     };
+    const { stageCatalog: _stageCatalog, ...estateRest } = estate;
     return serializeMoney({
-      ...estate,
+      ...estateRest,
       projects: houses,
       ledgerEntries: ledger,
       trends,
@@ -618,6 +657,16 @@ export class LabourRevenueService {
         description: 'Discounts granted to clients',
         debitCents: t.discountCents,
         creditCents: 0,
+        section: 'CONTRACT',
+      });
+    }
+    if (t.buildingMatchDiscountCents) {
+      const match = t.buildingMatchDiscountCents;
+      labourLines.push({
+        date: '',
+        description: 'Building match discount',
+        debitCents: match > 0 ? match : 0,
+        creditCents: match < 0 ? Math.abs(match) : 0,
         section: 'CONTRACT',
       });
     }
@@ -1065,7 +1114,7 @@ export class LabourRevenueService {
         estateProgrammeId: estateId,
         kind: ProjectKind.ESTATE_UNIT,
       },
-      include: { client: true },
+      include: { client: true, boqLines: { select: { id: true } } },
     });
     if (!project) throw new NotFoundException('House not found in this estate');
 
@@ -1079,6 +1128,12 @@ export class LabourRevenueService {
       });
     }
 
+    const hasBoq = project.boqLines.length > 0;
+    const nextStart =
+      dto.catchupStageLabel !== undefined
+        ? dto.catchupStageLabel.trim() || null
+        : project.catchupStageLabel;
+
     await this.prisma.project.update({
       where: { id: projectId },
       data: {
@@ -1091,7 +1146,7 @@ export class LabourRevenueService {
           : dto.discountReason !== undefined
             ? { discountReason: dto.discountReason?.trim() || null }
             : {}),
-        ...(dto.labourQuotedCents !== undefined
+        ...(!hasBoq && dto.labourQuotedCents !== undefined
           ? {
               labourQuotedCents: BigInt(
                 Math.max(0, Math.round(dto.labourQuotedCents)),
@@ -1110,6 +1165,10 @@ export class LabourRevenueService {
           : {}),
       },
     });
+
+    if (hasBoq && dto.catchupStageLabel !== undefined) {
+      await this.repriceHouseFromSnapshot(projectId, nextStart, project.allocatedLabourCents);
+    }
 
     return this.getEstate(estateId);
   }
@@ -1144,6 +1203,17 @@ export class LabourRevenueService {
     }
     const result = await this.prisma.project.updateMany({ where, data });
 
+    if (dto.catchupStageLabel !== undefined) {
+      const start = dto.catchupStageLabel.trim() || null;
+      const houses = await this.prisma.project.findMany({
+        where: { ...where, boqLines: { some: {} } },
+        select: { id: true, allocatedLabourCents: true },
+      });
+      for (const house of houses) {
+        await this.repriceHouseFromSnapshot(house.id, start, house.allocatedLabourCents);
+      }
+    }
+
     await this.prisma.auditLog.create({
       data: {
         userId: dto.createdById,
@@ -1162,24 +1232,417 @@ export class LabourRevenueService {
     return { applied: result.count, estate };
   }
 
-  private async stageOrder() {
-    const templates = await this.prisma.stageTemplate.findMany({
+  private async stageCatalog() {
+    return this.prisma.stageTemplate.findMany({
       where: { isActive: true },
       orderBy: { sortOrder: 'asc' },
-      select: { name: true },
+      select: { name: true, sortOrder: true },
     });
-    return templates.map((t) => t.name);
   }
 
-  private stageRows(houses: any[], order: string[]) {
+  private async stageOrder() {
+    const templates = await this.stageCatalog();
+    return {
+      order: templates.map((t) => t.name),
+      construction: templates.filter((t) => t.sortOrder < 100).map((t) => t.name),
+      legacy: templates.filter((t) => t.sortOrder >= 100).map((t) => t.name),
+    };
+  }
+
+  private lineLabel(line: { sectionName?: string | null; stageName: string }) {
+    const section = line.sectionName?.trim();
+    const name = line.stageName.trim();
+    return section ? `${section} · ${name}` : name;
+  }
+
+  private startSortOrder(
+    label: string | null | undefined,
+    catalog: { name: string; sortOrder: number }[],
+    lines: { sectionName?: string | null; stageName: string; sortOrder: number }[],
+  ) {
+    const name = label?.trim();
+    if (!name) return null;
+    const lower = name.toLowerCase();
+    const labelled = lines.find((l) => this.lineLabel(l).toLowerCase() === lower);
+    if (labelled) return labelled.sortOrder;
+    const resolved = this.resolveQuoteStage(
+      name,
+      lines.map((l) => this.lineLabel(l)),
+    );
+    if (resolved) {
+      const match = lines.find((l) => this.lineLabel(l).toLowerCase() === resolved.toLowerCase());
+      if (match) return match.sortOrder;
+    }
+    const line = lines.find((l) => l.stageName.toLowerCase() === lower);
+    if (line) return line.sortOrder;
+    const template = catalog.find((t) => t.name.toLowerCase() === lower);
+    if (template) return template.sortOrder;
+    return null;
+  }
+
+  /** Older template names, pointed at the quotation description they stand for. */
+  private quoteStageAlias(label: string): { description: string; pick: 'first' | 'last' } | null {
+    const aliases: Record<string, { description: string; pick: 'first' | 'last' }> = {
+      'back filling and compacting concrete slab': { description: 'concrete slab', pick: 'first' },
+      'concrete roof deck 1': { description: 'concrete roof deck', pick: 'first' },
+      'concrete roof deck 2': { description: 'concrete roof deck', pick: 'first' },
+      'roof deck steel fixing 1': { description: 'roof deck steel fixing', pick: 'first' },
+      'roof deck steel fixing 2': { description: 'roof deck steel fixing', pick: 'first' },
+      'parapet and wall coping': { description: 'parrapet and wall couping', pick: 'first' },
+      'site clearing': { description: 'land clearing', pick: 'first' },
+      foundation: { description: 'concrete bases', pick: 'first' },
+      slab: { description: 'concrete slab', pick: 'first' },
+      walls: { description: 'average level', pick: 'first' },
+      'average level': { description: 'average level', pick: 'last' },
+      'window level': { description: 'window level', pick: 'last' },
+      'steel structure': { description: 'steel fixing of ring beam', pick: 'first' },
+      'roof structure': { description: 'wall plate', pick: 'first' },
+      plumbing: { description: 'plumbing fix and supply', pick: 'first' },
+    };
+    return aliases[label] || null;
+  }
+
+  private quoteDescription(stage: string) {
+    const parts = stage.split(' · ');
+    return (parts.length > 1 ? parts.slice(1).join(' · ') : stage).trim().toLowerCase();
+  }
+
+  /** Stored labels such as Walls or Site Clearing become the matching quotation stage. */
+  private resolveQuoteStage(label: string | null | undefined, quoteLabels: string[]) {
+    const raw = label?.trim() || '';
+    if (!raw || !quoteLabels.length) return raw || null;
+    const lower = raw.toLowerCase();
+    const exact = quoteLabels.find((stage) => stage.toLowerCase() === lower);
+    if (exact) return exact;
+    const pick = (description: string, which: 'first' | 'last') => {
+      const matches = quoteLabels.filter((stage) => this.quoteDescription(stage) === description);
+      if (!matches.length) return '';
+      return which === 'first' ? matches[0] : matches[matches.length - 1];
+    };
+    const alias = this.quoteStageAlias(lower);
+    if (alias) {
+      const aliased = pick(alias.description, alias.pick);
+      if (aliased) return aliased;
+    }
+    const described = pick(lower, 'last');
+    if (described) return described;
+    const stripped = lower.replace(/ \d+$/, '');
+    if (stripped !== lower) {
+      const numbered = pick(stripped, 'first');
+      if (numbered) return numbered;
+    }
+    return raw;
+  }
+
+  private quoteStageLabels(
+    boqs: { lines?: { sectionName?: string | null; stageName: string; sortOrder: number }[] }[],
+  ) {
+    const lists = (boqs || [])
+      .map((boq) => [...(boq.lines || [])].sort((a, b) => a.sortOrder - b.sortOrder))
+      .sort((a, b) => b.length - a.length);
+    const seen = new Set<string>();
+    const labels: string[] = [];
+    for (const lines of lists) {
+      for (const line of lines) {
+        const label = this.lineLabel(line);
+        const key = label.toLowerCase();
+        if (!label || seen.has(key)) continue;
+        seen.add(key);
+        labels.push(label);
+      }
+    }
+    return labels;
+  }
+
+  private priceSnapshot(
+    lines: {
+      id?: string;
+      sectionName?: string | null;
+      stageName: string;
+      sortOrder: number;
+      amountCents: bigint | number;
+    }[],
+    startLabel: string | null | undefined,
+    catalog: { name: string; sortOrder: number }[],
+  ) {
+    const start = this.startSortOrder(startLabel, catalog, lines);
+    let labourQuotedCents = 0;
+    const stages = [...lines]
+      .sort((a, b) => a.sortOrder - b.sortOrder)
+      .map((l) => {
+        const included = start === null || l.sortOrder >= start;
+        const amountCents = Number(l.amountCents);
+        if (included) labourQuotedCents += amountCents;
+        return {
+          id: l.id,
+          sectionName: l.sectionName || '',
+          stageName: l.stageName,
+          sortOrder: l.sortOrder,
+          amountCents,
+          included,
+        };
+      });
+    return { labourQuotedCents, stages };
+  }
+
+  private normalizeBoqLines(
+    lines: { sectionName?: string; stageName?: string; sortOrder?: number; amountCents?: number }[],
+  ) {
+    const cleaned = (lines || [])
+      .map((l, i) => ({
+        sectionName: l.sectionName?.trim() || null,
+        stageName: l.stageName?.trim() || '',
+        sortOrder: Number.isFinite(Number(l.sortOrder)) ? Number(l.sortOrder) : i + 1,
+        amountCents: Math.max(0, Math.round(Number(l.amountCents) || 0)),
+      }))
+      .filter((l) => l.stageName);
+    if (!cleaned.length) throw new BadRequestException('Add at least one description');
+    return cleaned;
+  }
+
+  async createEstateBoq(
+    estateId: string,
+    dto: {
+      name: string;
+      notes?: string;
+      lines: { sectionName?: string; stageName?: string; sortOrder?: number; amountCents?: number }[];
+    },
+  ) {
+    const estate = await this.prisma.estateProgramme.findUnique({ where: { id: estateId } });
+    if (!estate) throw new NotFoundException('Estate not found');
+    const name = dto.name?.trim();
+    if (!name) throw new BadRequestException('BOQ name is required');
+    const lines = this.normalizeBoqLines(dto.lines);
+    const created = await this.prisma.estateBoq.create({
+      data: {
+        estateProgrammeId: estateId,
+        name,
+        notes: dto.notes?.trim() || null,
+        lines: {
+          create: lines.map((l) => ({
+            sectionName: l.sectionName,
+            stageName: l.stageName,
+            sortOrder: l.sortOrder,
+            amountCents: BigInt(l.amountCents),
+          })),
+        },
+      },
+      include: { lines: { orderBy: { sortOrder: 'asc' } } },
+    });
+    return serializeMoney(created);
+  }
+
+  async updateEstateBoq(
+    estateId: string,
+    boqId: string,
+    dto: {
+      name?: string;
+      notes?: string;
+      lines?: { sectionName?: string; stageName?: string; sortOrder?: number; amountCents?: number }[];
+    },
+  ) {
+    const existing = await this.prisma.estateBoq.findFirst({
+      where: { id: boqId, estateProgrammeId: estateId },
+    });
+    if (!existing) throw new NotFoundException('BOQ not found');
+    const name = dto.name !== undefined ? dto.name.trim() : existing.name;
+    if (!name) throw new BadRequestException('BOQ name is required');
+    const lines = dto.lines ? this.normalizeBoqLines(dto.lines) : null;
+    const updated = await this.prisma.$transaction(async (tx) => {
+      if (lines) {
+        await tx.estateBoqLine.deleteMany({ where: { estateBoqId: boqId } });
+      }
+      return tx.estateBoq.update({
+        where: { id: boqId },
+        data: {
+          name,
+          ...(dto.notes !== undefined ? { notes: dto.notes.trim() || null } : {}),
+          ...(lines
+            ? {
+                lines: {
+                  create: lines.map((l) => ({
+                    sectionName: l.sectionName,
+                    stageName: l.stageName,
+                    sortOrder: l.sortOrder,
+                    amountCents: BigInt(l.amountCents),
+                  })),
+                },
+              }
+            : {}),
+        },
+        include: { lines: { orderBy: { sortOrder: 'asc' } } },
+      });
+    });
+    return serializeMoney(updated);
+  }
+
+  async deleteEstateBoq(estateId: string, boqId: string) {
+    const existing = await this.prisma.estateBoq.findFirst({
+      where: { id: boqId, estateProgrammeId: estateId },
+    });
+    if (!existing) throw new NotFoundException('BOQ not found');
+    await this.prisma.estateBoq.delete({ where: { id: boqId } });
+    return { ok: true };
+  }
+
+  async applyEstateBoq(
+    estateId: string,
+    boqId: string,
+    dto: { projectIds: string[]; createdById?: string },
+  ) {
+    if (!dto.projectIds?.length) throw new BadRequestException('Select at least one house');
+    const boq = await this.prisma.estateBoq.findFirst({
+      where: { id: boqId, estateProgrammeId: estateId },
+      include: { lines: { orderBy: { sortOrder: 'asc' } } },
+    });
+    if (!boq) throw new NotFoundException('BOQ not found');
+    if (!boq.lines.length) throw new BadRequestException('This BOQ has no stages');
+    const houses = await this.prisma.project.findMany({
+      where: {
+        id: { in: dto.projectIds },
+        estateProgrammeId: estateId,
+        kind: ProjectKind.ESTATE_UNIT,
+      },
+    });
+    if (houses.length !== dto.projectIds.length) {
+      throw new BadRequestException('Some selected houses do not belong to this estate');
+    }
+    const catalog = await this.stageCatalog();
+    await this.prisma.$transaction(
+      async (tx) => {
+        for (const house of houses) {
+          const existingCount = await tx.projectBoqLine.count({ where: { projectId: house.id } });
+          let allocated = house.allocatedLabourCents;
+          if (allocated == null && existingCount === 0 && Number(house.labourQuotedCents) > 0) {
+            allocated = house.labourQuotedCents;
+          }
+          await tx.projectBoqLine.deleteMany({ where: { projectId: house.id } });
+          await tx.projectBoqLine.createMany({
+            data: boq.lines.map((l) => ({
+              projectId: house.id,
+              sectionName: l.sectionName,
+              stageName: l.stageName,
+              sortOrder: l.sortOrder,
+              amountCents: l.amountCents,
+            })),
+          });
+          const priced = this.priceSnapshot(boq.lines, house.catchupStageLabel, catalog);
+          const buildingMatch =
+            allocated == null ? 0 : priced.labourQuotedCents - Number(allocated);
+          await tx.project.update({
+            where: { id: house.id },
+            data: {
+              estateBoqId: boq.id,
+              allocatedLabourCents: allocated,
+              labourQuotedCents: BigInt(priced.labourQuotedCents),
+              buildingMatchDiscountCents: BigInt(buildingMatch),
+            },
+          });
+        }
+      },
+      { timeout: 60000 },
+    );
+    await this.prisma.auditLog.create({
+      data: {
+        userId: dto.createdById,
+        action: 'ESTATE_BOQ_APPLY',
+        entityType: 'EstateProgramme',
+        entityId: estateId,
+        metadata: { boqId, projectIds: dto.projectIds },
+      },
+    });
+    return this.getEstate(estateId);
+  }
+
+  async clearEstateHouseBoq(estateId: string, projectId: string, userId?: string) {
+    const house = await this.prisma.project.findFirst({
+      where: {
+        id: projectId,
+        estateProgrammeId: estateId,
+        kind: ProjectKind.ESTATE_UNIT,
+      },
+      include: { boqLines: { select: { id: true } }, estateBoq: { select: { id: true, name: true } } },
+    });
+    if (!house) throw new NotFoundException('House not found in this estate');
+    if (!house.estateBoqId && house.boqLines.length === 0) {
+      throw new BadRequestException('This house has no quotation');
+    }
+    const restored =
+      house.allocatedLabourCents != null ? house.allocatedLabourCents : house.labourQuotedCents;
+    await this.prisma.$transaction(async (tx) => {
+      await tx.projectBoqLine.deleteMany({ where: { projectId } });
+      await tx.project.update({
+        where: { id: projectId },
+        data: {
+          estateBoqId: null,
+          allocatedLabourCents: null,
+          buildingMatchDiscountCents: 0n,
+          labourQuotedCents: restored,
+        },
+      });
+    });
+    await this.prisma.auditLog.create({
+      data: {
+        userId,
+        action: 'ESTATE_BOQ_CLEAR',
+        entityType: 'Project',
+        entityId: projectId,
+        metadata: { estateId, boqId: house.estateBoqId, boqName: house.estateBoq?.name || null },
+      },
+    });
+    return this.getEstate(estateId);
+  }
+
+  private async repriceHouseFromSnapshot(
+    projectId: string,
+    startLabel: string | null,
+    allocatedLabourCents: bigint | null,
+  ) {
+    const lines = await this.prisma.projectBoqLine.findMany({
+      where: { projectId },
+      orderBy: { sortOrder: 'asc' },
+    });
+    if (!lines.length) return;
+    const catalog = await this.stageCatalog();
+    const priced = this.priceSnapshot(lines, startLabel, catalog);
+    const buildingMatch =
+      allocatedLabourCents == null ? 0 : priced.labourQuotedCents - Number(allocatedLabourCents);
+    await this.prisma.project.update({
+      where: { id: projectId },
+      data: {
+        labourQuotedCents: BigInt(priced.labourQuotedCents),
+        buildingMatchDiscountCents: BigInt(buildingMatch),
+      },
+    });
+  }
+
+  private completionPercent(label: string | null | undefined, sequences: string[][]) {
+    const name = label?.trim().toLowerCase();
+    if (!name) return null;
+    for (const sequence of sequences) {
+      if (!sequence.length) continue;
+      const index = sequence.findIndex((stage) => stage.toLowerCase() === name);
+      if (index >= 0) return Math.round(((index + 1) / sequence.length) * 100);
+    }
+    return null;
+  }
+
+  private stageRows(
+    houses: any[],
+    order: string[],
+    sequences: string[][],
+    quoteLabels: string[] = [],
+  ) {
+    const sequence = quoteLabels.length ? quoteLabels : order;
     const idx = (label?: string | null) => {
       if (!label) return -1;
-      const i = order.findIndex((n) => n.toLowerCase() === label.trim().toLowerCase());
-      return i;
+      return sequence.findIndex((n) => n.toLowerCase() === label.trim().toLowerCase());
     };
     return houses.map((h: any) => {
-      const startIdx = idx(h.catchupStageLabel);
-      const currentIdx = idx(h.currentStageLabel);
+      const startStage = this.resolveQuoteStage(h.catchupStageLabel, quoteLabels);
+      const currentStage = this.resolveQuoteStage(h.currentStageLabel, quoteLabels);
+      const startIdx = idx(startStage);
+      const currentIdx = idx(currentStage);
       return {
         projectId: h.id,
         code: h.code,
@@ -1187,12 +1650,16 @@ export class LabourRevenueService {
         houseName: h.name,
         ownerName: h.client?.name || '',
         ownerPhone: h.client?.phone || '',
-        startStage: h.catchupStageLabel || null,
-        currentStage: h.currentStageLabel || null,
+        startStage,
+        currentStage,
         currentStageUpdatedAt: h.currentStageUpdatedAt || null,
         stagesAdvanced:
           startIdx >= 0 && currentIdx >= 0 ? currentIdx - startIdx : null,
         currentStageIndex: currentIdx,
+        completionPercent: this.completionPercent(
+          currentStage,
+          quoteLabels.length ? [quoteLabels, ...sequences] : sequences,
+        ),
       };
     });
   }
@@ -1213,6 +1680,7 @@ export class LabourRevenueService {
         .sort((a, b) => rank(a.stage) - rank(b.stage));
     };
     const advanced = rows.filter((r) => r.stagesAdvanced !== null);
+    const withCompletion = rows.filter((r) => r.completionPercent !== null);
     return {
       houseCount: rows.length,
       withStartStage: rows.filter((r) => r.startStage).length,
@@ -1222,6 +1690,12 @@ export class LabourRevenueService {
         ? Math.round(
             (advanced.reduce((s, r) => s + (r.stagesAdvanced || 0), 0) / advanced.length) * 10,
           ) / 10
+        : null,
+      averageCompletionPercent: withCompletion.length
+        ? Math.round(
+            withCompletion.reduce((s, r) => s + (r.completionPercent || 0), 0) /
+              withCompletion.length,
+          )
         : null,
       byCurrentStage: countBy('currentStage'),
       byStartStage: countBy('startStage'),
@@ -1235,6 +1709,14 @@ export class LabourRevenueService {
         id: true,
         code: true,
         name: true,
+        boqs: {
+          select: {
+            lines: {
+              orderBy: { sortOrder: 'asc' },
+              select: { sectionName: true, stageName: true, sortOrder: true },
+            },
+          },
+        },
         projects: {
           where: { kind: ProjectKind.ESTATE_UNIT },
           select: {
@@ -1252,13 +1734,20 @@ export class LabourRevenueService {
       },
     });
     if (!estate) throw new NotFoundException('Estate not found');
-    const order = await this.stageOrder();
-    const rows = this.stageRows(estate.projects, order);
+    const { order, construction, legacy } = await this.stageOrder();
+    const quoteLabels = this.quoteStageLabels(estate.boqs);
+    const rows = this.stageRows(
+      estate.projects,
+      order,
+      [quoteLabels, construction, legacy],
+      quoteLabels,
+    );
+    const rank = quoteLabels.length ? quoteLabels : order;
     return {
       estate: { id: estate.id, code: estate.code, name: estate.name },
-      stageOrder: order,
+      stageOrder: rank,
       rows,
-      summary: this.stageSummary(rows, order),
+      summary: this.stageSummary(rows, rank),
     };
   }
 
@@ -1269,6 +1758,14 @@ export class LabourRevenueService {
         id: true,
         code: true,
         name: true,
+        boqs: {
+          select: {
+            lines: {
+              orderBy: { sortOrder: 'asc' },
+              select: { sectionName: true, stageName: true, sortOrder: true },
+            },
+          },
+        },
         projects: {
           where: { kind: ProjectKind.ESTATE_UNIT },
           select: {
@@ -1285,16 +1782,22 @@ export class LabourRevenueService {
         },
       },
     });
-    const order = await this.stageOrder();
+    const { order, construction, legacy } = await this.stageOrder();
     return {
       stageOrder: order,
       estates: estates.map((e) => {
-        const rows = this.stageRows(e.projects, order);
+        const quoteLabels = this.quoteStageLabels(e.boqs);
+        const rows = this.stageRows(
+          e.projects,
+          order,
+          [quoteLabels, construction, legacy],
+          quoteLabels,
+        );
         return {
           id: e.id,
           code: e.code,
           name: e.name,
-          summary: this.stageSummary(rows, order),
+          summary: this.stageSummary(rows, quoteLabels.length ? quoteLabels : order),
         };
       }),
     };
@@ -1314,6 +1817,7 @@ export class LabourRevenueService {
       ['Houses with current stage', s.withCurrentStage],
       ['Houses that progressed', s.progressedHouses],
       ['Average stages advanced', s.averageStagesAdvanced ?? ''],
+      ['Average completion %', s.averageCompletionPercent ?? ''],
       [],
       ['Current stage', 'Houses'],
       ...s.byCurrentStage.map((x) => [x.stage, x.houses]),
@@ -1329,6 +1833,7 @@ export class LabourRevenueService {
         'Phone',
         'Start stage',
         'Current stage',
+        'Completion %',
         'Stages advanced',
         'Stage updated',
       ],
@@ -1340,6 +1845,7 @@ export class LabourRevenueService {
         r.ownerPhone,
         r.startStage || '',
         r.currentStage || '',
+        r.completionPercent ?? '',
         r.stagesAdvanced ?? '',
         r.currentStageUpdatedAt
           ? new Date(r.currentStageUpdatedAt).toISOString().slice(0, 10)
@@ -1368,6 +1874,7 @@ export class LabourRevenueService {
       catchupStageLabel?: string;
       currentStageLabel?: string;
       cashReceivedCents?: number;
+      estateBoqId?: string;
       createdById?: string;
     },
   ) {
@@ -1380,7 +1887,7 @@ export class LabourRevenueService {
     if (!estate) throw new NotFoundException('Estate not found');
 
     const nextUnit = (estate.projects[0]?.unitNumber || estate.houseCount || 0) + 1;
-    const labourQuotedCents = Math.max(
+    let labourQuotedCents = Math.max(
       0,
       Math.round(
         dto.labourQuotedCents !== undefined
@@ -1389,6 +1896,22 @@ export class LabourRevenueService {
       ),
     );
     const discountCents = Math.max(0, Math.round(dto.discountCents || 0));
+    const boq = dto.estateBoqId
+      ? await this.prisma.estateBoq.findFirst({
+          where: { id: dto.estateBoqId, estateProgrammeId: estateId },
+          include: { lines: { orderBy: { sortOrder: 'asc' } } },
+        })
+      : null;
+    if (dto.estateBoqId && !boq) throw new NotFoundException('BOQ not found on this estate');
+    if (boq) {
+      if (!boq.lines.length) throw new BadRequestException('This BOQ has no stages');
+      const catalog = await this.stageCatalog();
+      labourQuotedCents = this.priceSnapshot(
+        boq.lines,
+        dto.catchupStageLabel,
+        catalog,
+      ).labourQuotedCents;
+    }
     const clientId = await this.resolveOwnerClient(
       { name: dto.ownerName, phone: dto.ownerPhone },
       `${estate.name} house ${nextUnit}`,
@@ -1410,6 +1933,8 @@ export class LabourRevenueService {
         labourQuotedCents: BigInt(labourQuotedCents),
         discountCents: BigInt(discountCents),
         discountReason: dto.discountReason || null,
+        estateBoqId: boq?.id || null,
+        buildingMatchDiscountCents: 0n,
         catchupStageLabel: dto.catchupStageLabel?.trim() || null,
         currentStageLabel:
           dto.currentStageLabel?.trim() || dto.catchupStageLabel?.trim() || null,
@@ -1426,6 +1951,18 @@ export class LabourRevenueService {
         propertyNotes: estate.propertyNotes,
       },
     });
+
+    if (boq) {
+      await this.prisma.projectBoqLine.createMany({
+        data: boq.lines.map((l) => ({
+          projectId: project.id,
+          sectionName: l.sectionName,
+          stageName: l.stageName,
+          sortOrder: l.sortOrder,
+          amountCents: l.amountCents,
+        })),
+      });
+    }
 
     await this.prisma.estateProgramme.update({
       where: { id: estateId },
@@ -1641,6 +2178,7 @@ export class LabourRevenueService {
       ['Houses', estate.trends.houseCount],
       ['Labour quoted', estate.trends.labourQuotedCents / 100],
       ['Discounts', estate.trends.discountCents / 100],
+      ['Building match discount', (estate.trends.buildingMatchDiscountCents || 0) / 100],
       ['Net due', estate.trends.netDueCents / 100],
       ['Cash received', estate.trends.cashReceivedCents / 100],
       ['Fund uses', estate.trends.fundUsesCents / 100],
@@ -1658,6 +2196,9 @@ export class LabourRevenueService {
         'Labour quoted',
         'Discount',
         'Discount reason',
+        'Building match discount',
+        'BOQ',
+        'Stage amounts',
         'Net due',
         'Cash in',
         'Fund uses',
@@ -1677,6 +2218,14 @@ export class LabourRevenueService {
         h.trail.labourQuotedCents / 100,
         h.trail.discountCents / 100,
         h.discountReason || '',
+        (h.trail.buildingMatchDiscountCents || 0) / 100,
+        h.estateBoq?.name || '',
+        (h.boqStages || [])
+          .map(
+            (s: any) =>
+              `${s.sectionName ? s.sectionName + ' / ' : ''}${s.stageName} ${s.amountCents / 100}${s.included ? '' : ' (not charged)'}`,
+          )
+          .join('; '),
         h.trail.netDueCents / 100,
         h.trail.cashReceivedCents / 100,
         h.trail.fundUsesCents / 100,
