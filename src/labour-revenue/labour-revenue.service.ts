@@ -1250,9 +1250,7 @@ export class LabourRevenueService {
   }
 
   private lineLabel(line: { sectionName?: string | null; stageName: string }) {
-    const section = line.sectionName?.trim();
-    const name = line.stageName.trim();
-    return section ? `${section} · ${name}` : name;
+    return line.stageName.trim();
   }
 
   private startSortOrder(
@@ -1263,7 +1261,11 @@ export class LabourRevenueService {
     const name = label?.trim();
     if (!name) return null;
     const lower = name.toLowerCase();
-    const labelled = lines.find((l) => this.lineLabel(l).toLowerCase() === lower);
+    const bare = this.quoteDescription(name);
+    const labelled = lines.find((l) => {
+      const stage = this.lineLabel(l).toLowerCase();
+      return stage === lower || stage === bare;
+    });
     if (labelled) return labelled.sortOrder;
     const resolved = this.resolveQuoteStage(
       name,
@@ -1273,7 +1275,10 @@ export class LabourRevenueService {
       const match = lines.find((l) => this.lineLabel(l).toLowerCase() === resolved.toLowerCase());
       if (match) return match.sortOrder;
     }
-    const line = lines.find((l) => l.stageName.toLowerCase() === lower);
+    const line = lines.find((l) => {
+      const stage = l.stageName.toLowerCase();
+      return stage === lower || stage === bare;
+    });
     if (line) return line.sortOrder;
     const template = catalog.find((t) => t.name.toLowerCase() === lower);
     if (template) return template.sortOrder;
@@ -1314,20 +1319,26 @@ export class LabourRevenueService {
     const lower = raw.toLowerCase();
     const exact = quoteLabels.find((stage) => stage.toLowerCase() === lower);
     if (exact) return exact;
+    const bare = this.quoteDescription(raw);
+    const keys = bare !== lower ? [lower, bare] : [lower];
     const pick = (description: string, which: 'first' | 'last') => {
       const matches = quoteLabels.filter((stage) => this.quoteDescription(stage) === description);
       if (!matches.length) return '';
       return which === 'first' ? matches[0] : matches[matches.length - 1];
     };
-    const alias = this.quoteStageAlias(lower);
-    if (alias) {
+    for (const key of keys) {
+      const alias = this.quoteStageAlias(key);
+      if (!alias) continue;
       const aliased = pick(alias.description, alias.pick);
       if (aliased) return aliased;
     }
-    const described = pick(lower, 'last');
-    if (described) return described;
-    const stripped = lower.replace(/ \d+$/, '');
-    if (stripped !== lower) {
+    for (const key of keys) {
+      const described = pick(key, 'last');
+      if (described) return described;
+    }
+    for (const key of keys) {
+      const stripped = key.replace(/ \d+$/, '');
+      if (stripped === key) continue;
       const numbered = pick(stripped, 'first');
       if (numbered) return numbered;
     }
@@ -2223,7 +2234,7 @@ export class LabourRevenueService {
         (h.boqStages || [])
           .map(
             (s: any) =>
-              `${s.sectionName ? s.sectionName + ' / ' : ''}${s.stageName} ${s.amountCents / 100}${s.included ? '' : ' (not charged)'}`,
+              `${s.stageName} ${s.amountCents / 100}${s.included ? '' : ' (not charged)'}`,
           )
           .join('; '),
         h.trail.netDueCents / 100,
