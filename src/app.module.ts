@@ -24,6 +24,7 @@ import { SiteVisitsModule } from './site-visits/site-visits.module';
 import { RolesGuard } from './common/roles.decorator';
 import { LabourRevenueModule } from './labour-revenue/labour-revenue.module';
 import { QuickQuotationsModule } from './quick-quotations/quick-quotations.module';
+import { BackupModule } from './backup/backup.module';
 
 @Module({
   imports: [
@@ -31,6 +32,7 @@ import { QuickQuotationsModule } from './quick-quotations/quick-quotations.modul
     PrismaModule,
     AuthModule,
     UsersModule,
+    BackupModule,
     ClientsModule,
     StageTemplatesModule,
     ProjectsModule,
