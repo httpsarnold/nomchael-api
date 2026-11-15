@@ -1,5 +1,7 @@
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  // native = local Windows/Mac; debian-openssl-3.0.x = Railway (node:20-bookworm)
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
 }
 
 datasource db {
@@ -182,6 +184,7 @@ model User {
   createdPayments      Payment[]
   createdFundUses      ProjectFundUse[]
   createdEstateLedger  EstateLedgerEntry[]
+  createdGroupExpenses EstateGroupExpense[]
   projectAssignments   ProjectAssignment[]
 
   @@index([role, isActive])
@@ -285,6 +288,8 @@ model EstateProgramme {
   projects      Project[]
   ledgerEntries EstateLedgerEntry[]
   boqs          EstateBoq[]
+  expenseLists  EstateExpenseList[]
+  groupExpenses EstateGroupExpense[]
 
   @@index([name])
   @@index([createdAt])
@@ -301,6 +306,8 @@ model EstateBoq {
   estate   EstateProgramme  @relation(fields: [estateProgrammeId], references: [id], onDelete: Cascade)
   lines    EstateBoqLine[]
   projects Project[]
+  expenseLists EstateExpenseList[]
+  groupExpenses EstateGroupExpense[]
 
   @@index([estateProgrammeId, name])
 }
@@ -329,6 +336,54 @@ model ProjectBoqLine {
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@index([projectId, sortOrder])
+}
+
+model EstateExpenseList {
+  id                String   @id @default(cuid())
+  estateProgrammeId String
+  estateBoqId       String
+  name              String
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  estate   EstateProgramme         @relation(fields: [estateProgrammeId], references: [id], onDelete: Cascade)
+  boq      EstateBoq               @relation(fields: [estateBoqId], references: [id], onDelete: Cascade)
+  lines    EstateExpenseListLine[]
+  projects Project[]
+
+  @@index([estateProgrammeId, estateBoqId])
+}
+
+model EstateExpenseListLine {
+  id                  String  @id @default(cuid())
+  estateExpenseListId String
+  sectionName         String?
+  stageName           String
+  sortOrder           Int
+  amountCents         BigInt
+
+  list EstateExpenseList @relation(fields: [estateExpenseListId], references: [id], onDelete: Cascade)
+
+  @@index([estateExpenseListId, sortOrder])
+}
+
+model EstateGroupExpense {
+  id                String   @id @default(cuid())
+  estateProgrammeId String
+  estateBoqId       String
+  description       String
+  amountCents       BigInt
+  partyName         String?
+  entryDate         DateTime @default(now())
+  createdById       String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  estate    EstateProgramme @relation(fields: [estateProgrammeId], references: [id], onDelete: Cascade)
+  boq       EstateBoq       @relation(fields: [estateBoqId], references: [id], onDelete: Cascade)
+  createdBy User?           @relation(fields: [createdById], references: [id])
+
+  @@index([estateProgrammeId, estateBoqId])
 }
 
 model EstateLedgerEntry {
@@ -384,6 +439,7 @@ model Project {
   discountCents     BigInt      @default(0)
   discountReason    String?
   estateBoqId       String?
+  estateExpenseListId String?
   allocatedLabourCents BigInt?
   buildingMatchDiscountCents BigInt @default(0)
   catchupStageLabel String?
@@ -400,6 +456,7 @@ model Project {
   standPackage     StandPackage?       @relation(fields: [standPackageId], references: [id])
   estateProgramme  EstateProgramme?    @relation(fields: [estateProgrammeId], references: [id])
   estateBoq        EstateBoq?          @relation(fields: [estateBoqId], references: [id], onDelete: SetNull)
+  estateExpenseList EstateExpenseList?  @relation(fields: [estateExpenseListId], references: [id], onDelete: SetNull)
   boqLines         ProjectBoqLine[]
   stages           ProjectStage[]
   rooms            ProjectRoom[]
@@ -419,6 +476,7 @@ model Project {
   @@index([standPackageId, standNumber])
   @@index([estateProgrammeId, unitNumber])
   @@index([estateBoqId])
+  @@index([estateExpenseListId])
   @@index([kind, status])
   @@index([status])
   @@index([propertyType])
