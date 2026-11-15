@@ -264,6 +264,54 @@ class ApplyEstateBoqDto {
   projectIds!: string[];
 }
 
+class EstateExpenseLineDto {
+  @IsOptional()
+  @IsString()
+  sectionName?: string;
+
+  @IsString()
+  @MinLength(1)
+  stageName!: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  amountCents?: number;
+}
+
+class EstateExpenseListDto {
+  @IsString()
+  @MinLength(1)
+  name!: string;
+
+  @IsString()
+  @MinLength(1)
+  estateBoqId!: string;
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => EstateExpenseLineDto)
+  lines!: EstateExpenseLineDto[];
+}
+
+class EstateGroupExpenseDto {
+  @IsString()
+  @MinLength(1)
+  estateBoqId!: string;
+
+  @IsString()
+  @MinLength(1)
+  description!: string;
+
+  @IsNumber()
+  @Min(1)
+  amountCents!: number;
+
+  @IsOptional()
+  @IsString()
+  partyName?: string;
+}
+
 class AddEstateHouseDto {
   @IsOptional()
   @IsString()
@@ -521,6 +569,56 @@ export class LabourRevenueController {
     @Req() req: { user: { id: string } },
   ) {
     return this.labour.applyEstateBoq(id, boqId, { ...dto, createdById: req.user.id });
+  }
+
+  @Post('estates/:id/expense-lists')
+  createEstateExpenseList(@Param('id') id: string, @Body() dto: EstateExpenseListDto) {
+    return this.labour.createEstateExpenseList(id, dto);
+  }
+
+  @Patch('estates/:id/expense-lists/:listId')
+  updateEstateExpenseList(
+    @Param('id') id: string,
+    @Param('listId') listId: string,
+    @Body() dto: EstateExpenseListDto,
+  ) {
+    return this.labour.updateEstateExpenseList(id, listId, dto);
+  }
+
+  @Delete('estates/:id/expense-lists/:listId')
+  deleteEstateExpenseList(@Param('id') id: string, @Param('listId') listId: string) {
+    return this.labour.deleteEstateExpenseList(id, listId);
+  }
+
+  @Post('estates/:id/group-expenses')
+  createEstateGroupExpense(
+    @Param('id') id: string,
+    @Body() dto: EstateGroupExpenseDto,
+    @Req() req: { user: { id: string } },
+  ) {
+    return this.labour.createEstateGroupExpense(id, { ...dto, createdById: req.user.id });
+  }
+
+  @Delete('estates/:id/group-expenses/:expenseId')
+  deleteEstateGroupExpense(@Param('id') id: string, @Param('expenseId') expenseId: string) {
+    return this.labour.deleteEstateGroupExpense(id, expenseId);
+  }
+
+  @Post('estates/:id/expense-lists/:listId/apply')
+  applyEstateExpenseList(
+    @Param('id') id: string,
+    @Param('listId') listId: string,
+    @Body() dto: ApplyEstateBoqDto,
+  ) {
+    return this.labour.applyEstateExpenseList(id, listId, dto);
+  }
+
+  @Delete('estates/:estateId/houses/:projectId/expense-list')
+  clearEstateHouseExpenseList(
+    @Param('estateId') estateId: string,
+    @Param('projectId') projectId: string,
+  ) {
+    return this.labour.clearEstateHouseExpenseList(estateId, projectId);
   }
 
   @Post('estates/:id/stages')
